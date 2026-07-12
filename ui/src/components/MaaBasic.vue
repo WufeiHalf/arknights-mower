@@ -151,17 +151,17 @@ const maa_touch_options = ['maatouch', 'minitouch', 'adb'].map((x) => {
   return { label: x, value: x }
 })
 
-const maa_updating = ref(false)
+const maa_updating_kind = ref('') // '' | 'software' | 'resource'
 const maa_update_msg = ref('')
 
 async function run_maa_update(kind) {
-  if (maa_updating.value || maa_testing.value) return
+  if (maa_updating_kind.value || maa_testing.value) return
   if (kind === 'software' && software_pending.value) {
     message.info('已下载，重启 mower 后生效')
     maa_update_msg.value = '已下载，重启 mower 后生效'
     return
   }
-  maa_updating.value = true
+  maa_updating_kind.value = kind
   maa_update_msg.value = kind === 'software' ? '正在检查软件更新……' : '正在检查资源更新……'
   try {
     let response = await axios.post(`${import.meta.env.VITE_HTTP_URL}/maa-update/start/${kind}`)
@@ -194,7 +194,7 @@ async function run_maa_update(kind) {
     maa_update_msg.value = `更新失败：${error.message}`
     message.error(maa_update_msg.value)
   } finally {
-    maa_updating.value = false
+    maa_updating_kind.value = ''
   }
 }
 </script>
@@ -237,19 +237,23 @@ async function run_maa_update(kind) {
     </n-form>
     <n-divider />
     <div class="misc-container">
-      <n-button :loading="maa_testing" :disabled="maa_testing || maa_updating" @click="test_maa">
+      <n-button
+        :loading="maa_testing"
+        :disabled="maa_testing || !!maa_updating_kind"
+        @click="test_maa"
+      >
         测试连接
       </n-button>
       <n-button
-        :loading="maa_updating"
-        :disabled="maa_testing || maa_updating || software_pending"
+        :loading="maa_updating_kind === 'software'"
+        :disabled="maa_testing || !!maa_updating_kind || software_pending"
         @click="run_maa_update('software')"
       >
         更新MAA
       </n-button>
       <n-button
-        :loading="maa_updating"
-        :disabled="maa_testing || maa_updating"
+        :loading="maa_updating_kind === 'resource'"
+        :disabled="maa_testing || !!maa_updating_kind"
         @click="run_maa_update('resource')"
       >
         更新资源
