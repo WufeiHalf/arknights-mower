@@ -376,6 +376,7 @@ class TestPendingApply(unittest.TestCase):
 
             zip_path = Path(tmp) / "res.zip"
             with zipfile.ZipFile(zip_path, "w") as zf:
+                # MirrorChyan Incremental.md: paths relative to package root
                 zf.writestr(
                     "changes.json",
                     json.dumps({"deleted": ["resource/old.txt"], "modified": []}),
@@ -396,6 +397,32 @@ class TestPendingApply(unittest.TestCase):
                 self.fail(f"version.json unreadable after apply: {e}")
             self.assertEqual(updated, "2026-07-10 16:30:29.000")
             self.assertTrue((resource / "new.txt").exists())
+
+    def test_apply_github_resource_zipball_layout(self):
+        import json
+        import tempfile
+        import zipfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            maa = Path(tmp) / "maa"
+            (maa / "resource").mkdir(parents=True)
+            zip_path = Path(tmp) / "gh.zip"
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr(
+                    "MaaResource-main/resource/version.json",
+                    json.dumps({"last_updated": "gh"}),
+                )
+                zf.writestr("MaaResource-main/resource/x.txt", "1")
+            maa_update.apply_resource_package(zip_path, maa)
+            try:
+                updated = json.loads(
+                    (maa / "resource" / "version.json").read_text(encoding="utf-8")
+                )["last_updated"]
+            except (OSError, json.JSONDecodeError, KeyError) as e:
+                self.fail(f"version.json unreadable after github apply: {e}")
+            self.assertEqual(updated, "gh")
+            self.assertTrue((maa / "resource" / "x.txt").exists())
 
 
 if __name__ == "__main__":

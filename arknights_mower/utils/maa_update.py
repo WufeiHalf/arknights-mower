@@ -499,12 +499,19 @@ def download_software_to_pending(
     }
 
 
-def apply_changes_json(resource_root: Path, changes: dict[str, Any]) -> None:
+def apply_changes_json(package_base: Path, changes: dict[str, Any]) -> None:
+    """Delete paths from changes.json.
+
+    Paths are package-root relative (MirrorChyan Incremental.md), e.g.
+    ``resource/config.json`` → ``<maa_path>/resource/config.json``.
+    ``package_base`` must be ``maa_path``, not ``maa_path/resource``.
+    """
     import shutil
 
     for key in ("deleted", "deleted_dir"):
         for rel in changes.get(key) or []:
-            target = resource_root / str(rel).lstrip("/")
+            rel_s = str(rel).lstrip("/").replace("\\", "/")
+            target = package_base / rel_s
             if target.is_dir():
                 try:
                     shutil.rmtree(target)
@@ -530,42 +537,62 @@ def _overlay_tree(src: Path, dst: Path) -> None:
             shutil.copy2(path, target)
 
 
+def _merge_package_into_maa(package_root: Path, maa_path: Path) -> None:
+    """Mirror GUI DirectoryMerge: overlay package root onto maa_path."""
+    import shutil
+
+    for item in package_root.iterdir():
+        if item.name == "changes.json":
+            continue
+        target = maa_path / item.name
+        if item.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            _overlay_tree(item, target)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+
+
 def apply_resource_package(zip_path: Path, maa_path: str | Path) -> None:
     import tempfile
     import zipfile
 
     maa_path = Path(maa_path)
-    resource_root = maa_path / "resource"
     with tempfile.TemporaryDirectory(prefix="maa_res_") as tmp:
         tmp_path = Path(tmp)
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(tmp_path)
-        # locate resource/ and optional changes.json
-        changes_file = next(tmp_path.rglob("changes.json"), None)
-        resource_src = next((p for p in tmp_path.rglob("resource") if p.is_dir()), None)
-        if changes_file and changes_file.is_file():
+
+        changes_file = next(
+            (p for p in tmp_path.rglob("changes.json") if p.is_file()), None
+        )
+        if changes_file is not None:
             try:
                 changes = json.loads(changes_file.read_text(encoding="utf-8"))
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 changes = {}
+            # package-root relative paths → resolve against maa_path
             apply_changes_json(maa_path, changes)
-        if resource_src is None:
-            # package root is the resource content itself
-            resource_src = tmp_path
-            # if single top-level dir like MaaResource-main/resource
-            children = [p for p in tmp_path.iterdir() if p.is_dir()]
-            if len(children) == 1 and (children[0] / "resource").is_dir():
-                resource_src = children[0] / "resource"
-            elif len(children) == 1 and not changes_file:
-                # MaaResource-main style where resource files live under resource/
-                maybe = children[0] / "resource"
-                if maybe.is_dir():
-                    resource_src = maybe
-        if resource_src and resource_src.is_dir():
-            resource_root.mkdir(parents=True, exist_ok=True)
-            _overlay_tree(resource_src, resource_root)
-        elif changes_file is None:
-            raise RuntimeError("资源包中未找到 resource 目录")
+
+        dirs = [p for p in tmp_path.iterdir() if p.is_dir()]
+        has_top_resource = (tmp_path / "resource").is_dir()
+        # GitHub zipball: MaaResource-main/resource/ (GUI only merges resource/)
+        if not has_top_resource and len(dirs) == 1 and (dirs[0] / "resource").is_dir():
+            resource_src = dirs[0] / "resource"
+            resource_dst = maa_path / "resource"
+            resource_dst.mkdir(parents=True, exist_ok=True)
+            _overlay_tree(resource_src, resource_dst)
+            return
+
+        # MirrorChyan (and similar): merge extract root onto maa_path
+        if has_top_resource or changes_file is not None:
+            _merge_package_into_maa(tmp_path, maa_path)
+            return
+
+        # bare resource content at root
+        resource_dst = maa_path / "resource"
+        resource_dst.mkdir(parents=True, exist_ok=True)
+        _overlay_tree(tmp_path, resource_dst)
 
 
 def download_and_apply_resource(

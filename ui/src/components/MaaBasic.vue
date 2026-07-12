@@ -70,15 +70,20 @@ async function load_available_sources() {
 }
 
 const update_tips = ref({ software: '', resource: '' })
+const software_pending = ref(false)
 let update_poll_timer = null
 
 async function poll_update_status() {
   try {
     const response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/maa-update/check-status`)
     const data = response.data || {}
+    software_pending.value = !!data.software?.pending_apply
     update_tips.value = {
       software: data.software?.has_update
-        ? data.software.message || '软件有更新，可点击按钮更新'
+        ? data.software.message ||
+          (software_pending.value
+            ? '软件更新已下载，重启 mower 后生效'
+            : '软件有更新，可点击按钮更新')
         : '',
       resource: data.resource?.has_update
         ? data.resource.message || '资源有更新，可点击按钮更新'
@@ -151,6 +156,11 @@ const maa_update_msg = ref('')
 
 async function run_maa_update(kind) {
   if (maa_updating.value || maa_testing.value) return
+  if (kind === 'software' && software_pending.value) {
+    message.info('已下载，重启 mower 后生效')
+    maa_update_msg.value = '已下载，重启 mower 后生效'
+    return
+  }
   maa_updating.value = true
   maa_update_msg.value = kind === 'software' ? '正在检查软件更新……' : '正在检查资源更新……'
   try {
@@ -232,7 +242,7 @@ async function run_maa_update(kind) {
       </n-button>
       <n-button
         :loading="maa_updating"
-        :disabled="maa_testing || maa_updating"
+        :disabled="maa_testing || maa_updating || software_pending"
         @click="run_maa_update('software')"
       >
         更新MAA
