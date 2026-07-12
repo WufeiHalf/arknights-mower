@@ -349,8 +349,19 @@ def pending_update_dir(maa_path: str | Path) -> Path:
 
 
 def has_pending_update(maa_path: str | Path) -> bool:
+    """True only when a complete pending package (meta + archive) is present."""
     path = pending_update_dir(maa_path)
-    return path.is_dir() and any(path.iterdir())
+    if not path.is_dir():
+        return False
+    meta = path / "meta.json"
+    if not meta.is_file():
+        return False
+    archives = [
+        p
+        for p in path.iterdir()
+        if p.is_file() and (p.suffix in {".zip", ".gz"} or p.name.endswith(".tar.gz"))
+    ]
+    return bool(archives)
 
 
 def download_file(url: str, dest: Path, *, proxy: str = "") -> None:
@@ -456,23 +467,30 @@ def download_software_to_pending(
                 "latest_version": remote or software_version,
             }
 
-    if pending.exists():
-        import shutil
+    import shutil
 
+    if pending.exists():
         try:
             shutil.rmtree(pending)
         except OSError:
             shutil.rmtree(pending, ignore_errors=True)
-    pending.mkdir(parents=True, exist_ok=True)
-    dest = pending / filename
-    download_file(url, dest, proxy=proxy)
-    (pending / "meta.json").write_text(
-        json.dumps(
-            {"version": remote, "source": source, "filename": filename},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+    try:
+        pending.mkdir(parents=True, exist_ok=True)
+        dest = pending / filename
+        download_file(url, dest, proxy=proxy)
+        (pending / "meta.json").write_text(
+            json.dumps(
+                {"version": remote, "source": source, "filename": filename},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        try:
+            shutil.rmtree(pending)
+        except OSError:
+            shutil.rmtree(pending, ignore_errors=True)
+        return {"status": "failed", "message": f"下载失败：{e}"}
     return {
         "status": "success",
         "message": f"软件 {remote} 已下载，重启 mower 后生效",

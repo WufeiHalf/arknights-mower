@@ -81,6 +81,7 @@ maa_update_job = {
     "message": "",
     "started_at": None,
     "result": None,
+    "kind": None,
 }
 
 
@@ -604,6 +605,50 @@ def _collect_maa_update_result():
             "result": result,
         }
     )
+    # refresh tip status after check/update jobs
+    try:
+        from arknights_mower.utils import maa_update as mu
+
+        status = dict(mu.get_update_status())
+        if result.get("status") == "success" and isinstance(
+            result.get("software"), dict
+        ):
+            # full check payload
+            status["software"] = result["software"]
+            status["resource"] = result.get("resource") or status.get("resource")
+            status["checked_at"] = time.time()
+            mu.maa_update_status = status
+        elif result.get("status") in {"success", "already_latest", "already_pending"}:
+            kind = (maa_update_job.get("kind") or "").strip()
+            if kind == "software" or result.get("pending_apply"):
+                software = dict(status.get("software") or {})
+                if result.get("pending_apply") or result.get("status") == "success":
+                    software["pending_apply"] = bool(result.get("pending_apply"))
+                    software["has_update"] = bool(result.get("pending_apply"))
+                    software["message"] = result.get("message", "")
+                    if result.get("latest_version"):
+                        software["latest_version"] = result["latest_version"]
+                if result.get("status") == "already_latest":
+                    software["has_update"] = False
+                    software["pending_apply"] = False
+                    software["message"] = ""
+                status["software"] = software
+            if kind == "resource" or (
+                result.get("status") in {"success", "already_latest"}
+                and not result.get("pending_apply")
+                and kind != "software"
+            ):
+                resource = dict(status.get("resource") or {})
+                if result.get("status") in {"success", "already_latest"}:
+                    resource["has_update"] = False
+                    resource["message"] = ""
+                    if result.get("latest_version"):
+                        resource["latest_version"] = result["latest_version"]
+                status["resource"] = resource
+            status["checked_at"] = time.time()
+            mu.maa_update_status = status
+    except Exception:
+        pass
 
 
 @app.route("/maa-update/check", methods=["POST"])
@@ -627,6 +672,7 @@ def post_maa_update_check():
             "message": "正在检查更新……",
             "started_at": time.monotonic(),
             "result": None,
+            "kind": "check",
         }
     )
     return {"status": "running", "message": "正在检查更新……"}
@@ -658,6 +704,7 @@ def post_maa_update_start(kind: str):
             "message": "正在更新……",
             "started_at": time.monotonic(),
             "result": None,
+            "kind": kind,
         }
     )
     return {"status": "running", "message": "正在更新……"}

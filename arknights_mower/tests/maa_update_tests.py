@@ -280,6 +280,49 @@ class TestUpdateActions(unittest.TestCase):
         self.assertEqual(result["status"], "already_pending")
         self.assertTrue(result["pending_apply"])
 
+    def test_incomplete_pending_not_ready(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            maa = Path(tmp)
+            pending = maa / maa_update.PENDING_DIRNAME
+            pending.mkdir()
+            (pending / "partial.zip").write_bytes(b"x")  # no meta.json
+            self.assertFalse(maa_update.has_pending_update(maa))
+
+    def test_download_failure_cleans_pending(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            maa = Path(tmp)
+            with (
+                patch.object(
+                    maa_update,
+                    "_mirrorchyan_latest",
+                    return_value={
+                        "code": 0,
+                        "data": {"version_name": "v9.0.0", "url": "http://x"},
+                    },
+                ),
+                patch.object(
+                    maa_update, "download_file", side_effect=RuntimeError("net")
+                ),
+            ):
+                result = maa_update.download_software_to_pending(
+                    maa_path=maa,
+                    software_version="v6.0.0",
+                    source="mirrorchyan",
+                    channel="stable",
+                    cdk="cdk",
+                    proxy="",
+                    system="windows",
+                )
+            self.assertEqual(result["status"], "failed")
+            self.assertFalse(maa_update.has_pending_update(maa))
+            self.assertFalse((maa / maa_update.PENDING_DIRNAME).exists())
+
     def test_mutex_already_running(self):
         # server-side convention: process non-null => already_running
         job = {"process": object(), "message": "正在更新……"}
