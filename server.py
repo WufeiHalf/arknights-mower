@@ -29,7 +29,15 @@ from arknights_mower.utils.maa_check import (
     maa_check_timeout_result,
     parse_maa_check_output,
 )
-from arknights_mower.utils.maa_update import available_sources, get_update_status
+from arknights_mower.utils.maa_update import (
+    MAA_UPDATE_TIMEOUT,
+    available_sources,
+    get_update_status,
+    has_pending_update,
+    maa_update_command,
+    maa_update_params,
+    parse_maa_update_output,
+)
 from arknights_mower.utils.operators import Operators, build_global_plan
 from arknights_mower.utils.path import get_path
 from arknights_mower.views.mastery import mastery_bp
@@ -65,6 +73,14 @@ maa_check_job = {
     "status": "idle",
     "message": "",
     "started_at": None,
+}
+maa_update_job = {
+    "id": None,
+    "process": None,
+    "status": "idle",
+    "message": "",
+    "started_at": None,
+    "result": None,
 }
 
 
@@ -539,7 +555,128 @@ def get_maa_update_available_sources():
 @app.route("/maa-update/check-status")
 @require_token
 def get_maa_update_check_status():
-    return get_update_status()
+    status = dict(get_update_status())
+    try:
+        pending = has_pending_update(config.conf.maa_path)
+    except Exception:
+        pending = False
+    software = dict(status.get("software") or {})
+    if pending:
+        software["pending_apply"] = True
+        software["has_update"] = True
+        software["message"] = "软件更新已下载，重启 mower 后生效"
+    status["software"] = software
+    return status
+
+
+def _collect_maa_update_result():
+    process = maa_update_job.get("process")
+    if process is None:
+        return
+
+    if process.poll() is None:
+        started_at = maa_update_job.get("started_at")
+        if started_at and time.monotonic() - started_at > MAA_UPDATE_TIMEOUT:
+            process.kill()
+            try:
+                process.communicate(timeout=1)
+            except Exception:
+                pass
+            maa_update_job.update(
+                {
+                    "process": None,
+                    "status": "failed",
+                    "message": f"MAA更新超时（{MAA_UPDATE_TIMEOUT}秒）",
+                    "started_at": None,
+                    "result": {"status": "failed", "message": "更新超时"},
+                }
+            )
+        return
+
+    stdout, stderr = process.communicate()
+    result = parse_maa_update_output(stdout, stderr, process.returncode)
+    maa_update_job.update(
+        {
+            "process": None,
+            "status": result.get("status", "failed"),
+            "message": result.get("message", ""),
+            "started_at": None,
+            "result": result,
+        }
+    )
+
+
+@app.route("/maa-update/check", methods=["POST"])
+@require_token
+def post_maa_update_check():
+    _collect_maa_update_result()
+    if maa_update_job.get("process") is not None:
+        return {"status": "already_running", "message": maa_update_job.get("message")}
+    process = subprocess.Popen(
+        maa_update_command(maa_update_params("check")),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if __system__ == "windows" else 0,
+    )
+    maa_update_job.update(
+        {
+            "id": time.time_ns(),
+            "process": process,
+            "status": "running",
+            "message": "正在检查更新……",
+            "started_at": time.monotonic(),
+            "result": None,
+        }
+    )
+    return {"status": "running", "message": "正在检查更新……"}
+
+
+@app.route("/maa-update/start/<kind>", methods=["POST"])
+@require_token
+def post_maa_update_start(kind: str):
+    _collect_maa_update_result()
+    if maa_update_job.get("process") is not None:
+        return {
+            "status": "already_running",
+            "message": maa_update_job.get("message") or "更新进行中",
+        }
+    if kind not in ("software", "resource"):
+        return {"status": "failed", "message": f"未知更新类型：{kind}"}
+    process = subprocess.Popen(
+        maa_update_command(maa_update_params(kind)),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if __system__ == "windows" else 0,
+    )
+    maa_update_job.update(
+        {
+            "id": time.time_ns(),
+            "process": process,
+            "status": "running",
+            "message": "正在更新……",
+            "started_at": time.monotonic(),
+            "result": None,
+        }
+    )
+    return {"status": "running", "message": "正在更新……"}
+
+
+@app.route("/maa-update/status")
+@require_token
+def get_maa_update_status():
+    _collect_maa_update_result()
+    payload = {
+        "status": maa_update_job.get("status", "idle"),
+        "message": maa_update_job.get("message", ""),
+    }
+    result = maa_update_job.get("result")
+    if isinstance(result, dict):
+        payload.update(result)
+        payload["status"] = result.get("status", payload["status"])
+        payload["message"] = result.get("message", payload["message"])
+    return payload
 
 
 @app.route("/maa-conn-preset")

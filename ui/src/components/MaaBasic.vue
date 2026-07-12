@@ -1,6 +1,8 @@
 <script setup>
 import { inject, onMounted, onUnmounted, ref, computed } from 'vue'
+import { useMessage } from 'naive-ui'
 const axios = inject('axios')
+const message = useMessage()
 
 const mobile = inject('mobile')
 
@@ -143,6 +145,48 @@ async function get_maa_conn_presets() {
 const maa_touch_options = ['maatouch', 'minitouch', 'adb'].map((x) => {
   return { label: x, value: x }
 })
+
+const maa_updating = ref(false)
+const maa_update_msg = ref('')
+
+async function run_maa_update(kind) {
+  if (maa_updating.value || maa_testing.value) return
+  maa_updating.value = true
+  maa_update_msg.value = kind === 'software' ? '正在检查软件更新……' : '正在检查资源更新……'
+  try {
+    let response = await axios.post(`${import.meta.env.VITE_HTTP_URL}/maa-update/start/${kind}`)
+    let data = response.data
+    if (data.status === 'already_running') {
+      maa_update_msg.value = data.message || '更新进行中'
+      return
+    }
+    while (data.status === 'running') {
+      maa_update_msg.value = data.message || '正在更新……'
+      await sleep(1000)
+      response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/maa-update/status`)
+      data = response.data
+    }
+    if (data.status === 'already_latest') {
+      message.info('已经是最新版本')
+      maa_update_msg.value = '已经是最新版本'
+    } else if (data.status === 'already_pending') {
+      message.info(data.message || '已下载，重启 mower 后生效')
+      maa_update_msg.value = data.message || '已下载，重启 mower 后生效'
+    } else if (data.status === 'success') {
+      message.success(data.message || '更新完成')
+      maa_update_msg.value = data.message || '更新完成'
+    } else {
+      message.error(data.message || '更新失败')
+      maa_update_msg.value = data.message || '更新失败'
+    }
+    await poll_update_status()
+  } catch (error) {
+    maa_update_msg.value = `更新失败：${error.message}`
+    message.error(maa_update_msg.value)
+  } finally {
+    maa_updating.value = false
+  }
+}
 </script>
 
 <template>
@@ -183,10 +227,24 @@ const maa_touch_options = ['maatouch', 'minitouch', 'adb'].map((x) => {
     </n-form>
     <n-divider />
     <div class="misc-container">
-      <n-button :loading="maa_testing" :disabled="maa_testing" @click="test_maa">
+      <n-button :loading="maa_testing" :disabled="maa_testing || maa_updating" @click="test_maa">
         测试连接
       </n-button>
-      <div>{{ maa_msg }}</div>
+      <n-button
+        :loading="maa_updating"
+        :disabled="maa_testing || maa_updating"
+        @click="run_maa_update('software')"
+      >
+        更新MAA
+      </n-button>
+      <n-button
+        :loading="maa_updating"
+        :disabled="maa_testing || maa_updating"
+        @click="run_maa_update('resource')"
+      >
+        更新资源
+      </n-button>
+      <div>{{ maa_msg || maa_update_msg }}</div>
     </div>
     <div v-if="update_tips.software || update_tips.resource" class="update-tips">
       <div v-if="update_tips.software">{{ update_tips.software }}</div>
