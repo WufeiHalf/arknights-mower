@@ -4086,6 +4086,20 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             logger.info("MAA 连接失败")
             raise Exception("MAA 连接失败")
 
+        try:
+            from arknights_mower.utils.maa_update import schedule_async_check
+
+            schedule_async_check(
+                maa_path=path,
+                software_version=self.MAA.get_version(),
+                source=getattr(conf, "maa_update_source", "github"),
+                channel=getattr(conf, "maa_update_channel", "stable"),
+                cdk=getattr(conf, "maa_mirrorchyan_cdk", ""),
+                proxy=getattr(conf, "maa_update_proxy", ""),
+            )
+        except Exception as e:
+            logger.debug(f"MAA 更新检查调度失败：{e}")
+
     def append_maa_task(self, type):
         if type in ["StartUp", "Visit"]:
             self.MAA.append_task(type)

@@ -29,7 +29,7 @@ from arknights_mower.utils.maa_check import (
     maa_check_timeout_result,
     parse_maa_check_output,
 )
-from arknights_mower.utils.maa_update import available_sources
+from arknights_mower.utils.maa_update import available_sources, get_update_status
 from arknights_mower.utils.operators import Operators, build_global_plan
 from arknights_mower.utils.path import get_path
 from arknights_mower.views.mastery import mastery_bp
@@ -534,6 +534,12 @@ def get_maa_update_available_sources():
         "system": __system__,
         "sources": sources,
     }
+
+
+@app.route("/maa-update/check-status")
+@require_token
+def get_maa_update_check_status():
+    return get_update_status()
 
 
 @app.route("/maa-conn-preset")

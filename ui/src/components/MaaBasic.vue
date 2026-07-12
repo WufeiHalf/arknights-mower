@@ -1,5 +1,5 @@
 <script setup>
-import { inject, onMounted, ref, computed } from 'vue'
+import { inject, onMounted, onUnmounted, ref, computed } from 'vue'
 const axios = inject('axios')
 
 const mobile = inject('mobile')
@@ -67,7 +67,35 @@ async function load_available_sources() {
   }
 }
 
-onMounted(load_available_sources)
+const update_tips = ref({ software: '', resource: '' })
+let update_poll_timer = null
+
+async function poll_update_status() {
+  try {
+    const response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/maa-update/check-status`)
+    const data = response.data || {}
+    update_tips.value = {
+      software: data.software?.has_update
+        ? data.software.message || '软件有更新，可点击按钮更新'
+        : '',
+      resource: data.resource?.has_update
+        ? data.resource.message || '资源有更新，可点击按钮更新'
+        : ''
+    }
+  } catch {
+    // silent
+  }
+}
+
+onMounted(() => {
+  load_available_sources()
+  poll_update_status()
+  update_poll_timer = setInterval(poll_update_status, 15000)
+})
+
+onUnmounted(() => {
+  if (update_poll_timer) clearInterval(update_poll_timer)
+})
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -160,6 +188,10 @@ const maa_touch_options = ['maatouch', 'minitouch', 'adb'].map((x) => {
       </n-button>
       <div>{{ maa_msg }}</div>
     </div>
+    <div v-if="update_tips.software || update_tips.resource" class="update-tips">
+      <div v-if="update_tips.software">{{ update_tips.software }}</div>
+      <div v-if="update_tips.resource">{{ update_tips.resource }}</div>
+    </div>
   </n-card>
 </template>
 
@@ -173,5 +205,12 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.update-tips {
+  margin-top: 8px;
+  color: #9c27b0;
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>
