@@ -154,7 +154,7 @@ class ReportSolver(SceneGraphSolver):
                 return False
             df = pd.read_csv(self.record_path, encoding="gbk", on_bad_lines="skip")
             for item in df.iloc:
-                if item[0] == self.date:
+                if item.iloc[0] == self.date:
                     return True
             return False
         except PermissionError:

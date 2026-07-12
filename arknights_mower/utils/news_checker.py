@@ -71,7 +71,7 @@ class NewsChecker:
 
                 # 遍历 ANNOUNCEMENT
                 for item in news_data["ANNOUNCEMENT"]:
-                    logger.debug(item["title"], item["brief"])
+                    logger.debug("%s %s", item.get("title", ""), item.get("brief", ""))
                     m_time = time_pattern.search(item["brief"])
                     if not m_time:
                         continue

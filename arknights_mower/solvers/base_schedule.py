@@ -118,6 +118,7 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
         self.ideal_resting_count = 4
         self.choose_error = set()
         self.drop_send = False
+        self._completed_masteries = set()
         self.global_plan = {}
         self.local_operation_followup_time = None
         self.restart_after_mood_read = False
@@ -861,11 +862,17 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                     agents = self.op_data.groups[_agent.group]
                     for a in agents:
                         __agent = self.op_data.operators[a]
+                        if not __agent.room or __agent.room not in self.op_data.plan:
+                            logger.debug(f"跳过{__agent}：房间为空或不在排班方案中")
+                            continue
                         if __agent.room not in fix_plan.keys():
                             fix_plan[__agent.room] = ["Current"] * len(
                                 self.op_data.plan[__agent.room]
                             )
                         fix_plan[__agent.room][__agent.index] = a
+                if not _agent.room or _agent.room not in self.op_data.plan:
+                    logger.debug(f"跳过{_agent}：房间为空或不在排班方案中")
+                    continue
                 if _agent.room not in fix_plan.keys():
                     fix_plan[_agent.room] = ["Current"] * len(
                         self.op_data.plan[_agent.room]
