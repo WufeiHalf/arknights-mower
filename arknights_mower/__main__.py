@@ -26,6 +26,22 @@ base_scheduler = None
 # 执行自动排班
 def main(saved_state, restart_after_mood_read=False):
     logger.info("开始运行Mower")
+    try:
+        from arknights_mower.utils.maa_update import (
+            apply_pending_software,
+            has_pending_update,
+        )
+
+        if has_pending_update(config.conf.maa_path):
+            result = apply_pending_software(config.conf.maa_path)
+            if result.get("status") == "success":
+                logger.info(result.get("message") or "MAA 软件更新已应用")
+            else:
+                logger.warning(
+                    result.get("message") or "MAA 软件更新应用失败，将在下次启动重试"
+                )
+    except Exception as e:
+        logger.exception(f"应用 MAA pending 更新失败：{e}")
     startup_maa_check = should_check_maa_before_start()
     rapidocr.initialize_ocr()
     data = None
