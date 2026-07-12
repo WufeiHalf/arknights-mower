@@ -1,5 +1,5 @@
 <script setup>
-import { inject, ref } from 'vue'
+import { inject, onMounted, ref, computed } from 'vue'
 const axios = inject('axios')
 
 const mobile = inject('mobile')
@@ -8,7 +8,16 @@ import { useConfigStore } from '@/stores/config'
 const store = useConfigStore()
 
 import { storeToRefs } from 'pinia'
-const { maa_path, maa_conn_preset, maa_touch_option, maa_startup_check } = storeToRefs(store)
+const {
+  maa_path,
+  maa_conn_preset,
+  maa_touch_option,
+  maa_startup_check,
+  maa_update_source,
+  maa_update_channel,
+  maa_mirrorchyan_cdk,
+  maa_update_proxy
+} = storeToRefs(store)
 
 import { folder_dialog } from '@/utils/dialog'
 
@@ -23,6 +32,42 @@ async function select_maa_dir() {
 
 const maa_msg = ref('')
 const maa_testing = ref(false)
+const available_sources = ref(['github', 'mirrorchyan'])
+
+const source_options = computed(() =>
+  [
+    { label: 'GitHub', value: 'github' },
+    { label: 'MirrorChyan', value: 'mirrorchyan' }
+  ].map((opt) => ({
+    ...opt,
+    disabled: !available_sources.value.includes(opt.value)
+  }))
+)
+
+const channel_options = [
+  { label: '正式版', value: 'stable' },
+  { label: 'Beta', value: 'beta' },
+  { label: '每夜', value: 'alpha' }
+]
+
+async function load_available_sources() {
+  try {
+    const response = await axios.get(
+      `${import.meta.env.VITE_HTTP_URL}/maa-update/available-sources`
+    )
+    available_sources.value = response.data.sources || []
+    if (
+      !available_sources.value.includes(maa_update_source.value) &&
+      available_sources.value.length
+    ) {
+      maa_update_source.value = available_sources.value[0]
+    }
+  } catch {
+    // keep defaults
+  }
+}
+
+onMounted(load_available_sources)
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -94,6 +139,18 @@ const maa_touch_options = ['maatouch', 'minitouch', 'adb'].map((x) => {
       </n-form-item>
       <n-form-item label="启动前测试">
         <n-checkbox v-model:checked="maa_startup_check">启动Mower前测试Maa连接</n-checkbox>
+      </n-form-item>
+      <n-form-item label="更新源">
+        <n-select v-model:value="maa_update_source" :options="source_options" />
+      </n-form-item>
+      <n-form-item label="更新渠道">
+        <n-select v-model:value="maa_update_channel" :options="channel_options" />
+      </n-form-item>
+      <n-form-item v-if="maa_update_source === 'mirrorchyan'" label="MirrorChyan CDK">
+        <n-input v-model:value="maa_mirrorchyan_cdk" type="password" show-password-on="click" />
+      </n-form-item>
+      <n-form-item label="更新代理">
+        <n-input v-model:value="maa_update_proxy" placeholder="http://127.0.0.1:7890" />
       </n-form-item>
     </n-form>
     <n-divider />
