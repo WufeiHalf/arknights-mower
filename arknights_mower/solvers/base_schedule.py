@@ -1487,9 +1487,14 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                             del tasks[0]
                         else:
                             if self.find("training_idle"):
-                                logger.debug("训练室空闲，移除任务")
+                                logger.info("训练室空闲，跳过收取，继续专精流程")
                                 del tasks[0]
-                                return
+                                # continue 而非 fall through：下面的
+                                # double_read_time 会读空训练室的垃圾 OCR 值
+                                # 导致误判（旧 PR #875 return 的原因）。
+                                # continue 让循环重读场景，tasks[0] 已是
+                                # "upgrade"，走技能选择分支
+                                continue
                             execute_time = self.double_read_time(
                                 ((236, 978), (380, 1020))
                             )
