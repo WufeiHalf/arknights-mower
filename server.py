@@ -7,7 +7,7 @@ import subprocess
 import time
 from functools import wraps
 from io import BytesIO
-from threading import Thread
+from threading import Lock, Thread
 
 import pytz
 from flask import Flask, abort, request, send_file, send_from_directory
@@ -65,6 +65,7 @@ if token := config.conf.webview.token:
     app.token = token
 
 mower_thread = None
+mower_thread_lock = Lock()
 log_lines = []
 ws_connections = []
 maa_check_job = {
@@ -257,13 +258,15 @@ def get_status():
         from arknights_mower.__main__ import base_scheduler
 
         if base_scheduler and mower_thread.is_alive():
-            response["plan_condition"] = list(base_scheduler.op_data.plan_condition)
-            for idx, plan in enumerate(base_scheduler.op_data.backup_plans):
-                if response["plan_condition"][idx]:
-                    response["plan_condition"][idx] = plan.name
-            response["plan_condition"] = [
-                name for name in response["plan_condition"] if name
-            ]
+            op_data = getattr(base_scheduler, "op_data", None)
+            if op_data is not None:
+                response["plan_condition"] = list(op_data.plan_condition)
+                for idx, plan in enumerate(op_data.backup_plans):
+                    if response["plan_condition"][idx]:
+                        response["plan_condition"][idx] = plan.name
+                response["plan_condition"] = [
+                    name for name in response["plan_condition"] if name
+                ]
 
             # 添加工作状态信息
             response["status"] = "sleeping" if base_scheduler.sleeping else "working"
@@ -285,31 +288,32 @@ def start(start_type):
     global mower_thread
     global log_lines
 
-    if mower_thread and mower_thread.is_alive():
-        return "false"
-    # 创建 tmp 文件夹
-    tmp_dir = get_path("@app/tmp")
-    tmp_dir.mkdir(exist_ok=True)
+    with mower_thread_lock:
+        if mower_thread and mower_thread.is_alive():
+            return "false"
+        # 创建 tmp 文件夹
+        tmp_dir = get_path("@app/tmp")
+        tmp_dir.mkdir(exist_ok=True)
 
-    config.stop_mower.clear()
-    saved_state = load_state()
-    if saved_state is None or start_type == "2":
-        saved_state = {}
-    if start_type == "1":
-        saved_state["tasks"] = []
-    restart_after_mood_read = (
-        start_type == "2" and config.conf.refresh_backup_plan_after_mood
-    )
-    from arknights_mower.__main__ import main
+        config.stop_mower.clear()
+        saved_state = load_state()
+        if saved_state is None or start_type == "2":
+            saved_state = {}
+        if start_type == "1":
+            saved_state["tasks"] = []
+        restart_after_mood_read = (
+            start_type == "2" and config.conf.refresh_backup_plan_after_mood
+        )
+        from arknights_mower.__main__ import main
 
-    mower_thread = Thread(
-        target=main, args=(saved_state, restart_after_mood_read), daemon=True
-    )
-    mower_thread.start()
+        mower_thread = Thread(
+            target=main, args=(saved_state, restart_after_mood_read), daemon=True
+        )
+        mower_thread.start()
 
-    log_lines = []
+        log_lines = []
 
-    return "true"
+        return "true"
 
 
 @app.route("/stop")
@@ -318,16 +322,17 @@ def start(start_type):
 def stop():
     global mower_thread
 
-    if mower_thread is None:
-        return "true"
+    with mower_thread_lock:
+        if mower_thread is None or not mower_thread.is_alive():
+            mower_thread = None
+            return "true"
 
-    config.stop_mower.set()
+        config.stop_mower.set()
 
-    mower_thread.join(10)
-    if mower_thread.is_alive():
-        logger.error("Mower线程仍在运行")
-        return "false"
-    else:
+        mower_thread.join(10)
+        if mower_thread.is_alive():
+            logger.error("Mower线程仍在运行")
+            return "false"
         logger.info("成功停止mower线程")
         mower_thread = None
         return "true"
