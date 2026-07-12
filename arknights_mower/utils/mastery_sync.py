@@ -30,14 +30,20 @@ class MasterySync:
             logger.info("MasterySync: 训练室已配置小组，跳过自动调度")
             return
 
+        skland_ok = True
         try:
             self._refresh_skland_data()
         except Exception as e:
-            logger.warning(f"MasterySync: failed to refresh Skland data: {e}")
+            skland_ok = False
+            logger.warning(f"MasterySync: Skland 刷新失败: {e}")
 
-        # 用 Skland 数据同步 DB plan
+        # 用 Skland 数据同步 DB plan（Skland 不通则跳过校验，靠游戏内推进）
         plan = get_in_progress_plan()
-        if plan:
+        if plan and not skland_ok:
+            logger.info(
+                "MasterySync: Skland 不通，跳过 in_progress 校验，靠游戏内 refresh_skill_time 推进"
+            )
+        elif plan:
             from arknights_mower.solvers.player_info import player_info_cache
 
             latest = player_info_cache.get("latest", {})
@@ -148,6 +154,14 @@ class MasterySync:
                     )
                 )
                 return
+
+        # Skland 不通时不调度 pending：不知道训练室是否有人，
+        # 调度可能顶掉正在专精的干员
+        if not skland_ok:
+            logger.info(
+                "MasterySync: Skland 不通，跳过 pending 调度（防止顶掉训练室干员）"
+            )
+            return
 
         # 先同步 cultivate.json 到 DB（自动完成已达成的等级）
         # 必须在 SKILL_UPGRADE 检查之前，否则队列里残留的 SKILL_UPGRADE
