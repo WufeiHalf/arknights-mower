@@ -15,7 +15,17 @@ import sys
 params = json.loads(sys.argv[1])
 try:
     maa_path = pathlib.Path(params["maa_path"])
-    sys.path.append(str(maa_path / "Python"))
+    asst_path = str(maa_path / "Python")
+    # Prefer asst bundled with maa_path. site-packages may ship a shim;
+    # append would keep importing the old one and break connect.
+    if asst_path in sys.path:
+        sys.path.remove(asst_path)
+    sys.path.insert(0, asst_path)
+    for module_name in list(sys.modules):
+        if module_name == "asst" or module_name.startswith("asst."):
+            module_file = getattr(sys.modules[module_name], "__file__", "") or ""
+            if not module_file.startswith(asst_path):
+                del sys.modules[module_name]
 
     from asst.asst import Asst
 

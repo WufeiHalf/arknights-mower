@@ -4037,15 +4037,25 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
         conf = config.conf
         path = pathlib.Path(conf.maa_path)
         asst_path = os.path.dirname(path / "Python" / "asst")
-        if asst_path not in sys.path:
-            sys.path.append(asst_path)
+        # Prefer Python/asst under maa_path; site-packages may have a shim.
+        if asst_path in sys.path:
+            sys.path.remove(asst_path)
+        sys.path.insert(0, asst_path)
+        for module_name in list(sys.modules):
+            if module_name == "asst" or module_name.startswith("asst."):
+                module_file = getattr(sys.modules[module_name], "__file__", "") or ""
+                if not module_file.startswith(asst_path):
+                    del sys.modules[module_name]
         global Message
 
         try:
             from asst.asst import Asst
             from asst.utils import InstanceOptionType, Message
 
-            logger.info("Maa Python模块导入成功")
+            logger.info(
+                "Maa Python模块导入成功: "
+                f"{getattr(sys.modules.get('asst.asst'), '__file__', '')}"
+            )
         except Exception as e:
             save_exception(e)
             logger.exception(f"Maa Python模块导入失败：{str(e)}")
