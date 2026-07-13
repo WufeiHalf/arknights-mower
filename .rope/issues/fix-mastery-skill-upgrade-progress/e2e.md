@@ -20,7 +20,7 @@ Failure Report:
 Forbidden Out-of-Scope Actions:
 - 不部署手机、不重启服务、不重置 DB。
 Result:
-- agent_passed: targeted static checks, compileall, scheduler tests 14/14; mastery/full suite blocked by unavailable environment dependencies.
+- agent_passed: via HTTP proxy `127.0.0.1:8118`, mastery 16/16 + scheduler 14/14 + base_scheduler 7/7 passed; Ruff lint/format, compileall, and diff-check passed.
 
 ## E2 Issue document consistency
 
