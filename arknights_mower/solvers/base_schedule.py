@@ -1525,8 +1525,11 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                                 del tasks[0]
                     if tasks[0] == "upgrade":
                         # 进入技能选择界面
+                        # (0.25, 0.95) 是 TRAIN_MAIN 的"开始专精"按钮，
+                        # 和 choose_train 一致。(0.05, 0.95) 是 TRAIN_FINISH
+                        # 的收取/确认按钮，在 TRAIN_MAIN 上会退出房间
                         self.tap(
-                            (self.recog.w * 0.05, self.recog.h * 0.95),
+                            (self.recog.w * 0.25, self.recog.h * 0.95),
                             interval=0.5,
                         )
                     if tasks[0] == "confirm":
