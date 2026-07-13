@@ -153,6 +153,26 @@ if not skland_ok:
 existing in_progress plans still advance via `refresh_skill_time`.
 Recovers automatically when Skland comes back.
 
+## Mastery Room Retry Contract
+
+In `assistant_follows_schedule=false` mode, the `_mastery` temporary
+training-room task created by `MasterySync` must run before its
+`SKILL_UPGRADE` task. If the post-arrangement room read does not find the
+target operator in the training slot:
+
+- Do not tap the TRAIN_MAIN start-specialization button.
+- Do not mark the plan as material failure or permanent `failed`.
+- Keep the `in_progress` plan and rebuild one `_mastery` task after
+  de-duplicating by `plan_key`.
+- Schedule the retry at `now + 5 seconds`; do not spin inside the current
+  transition.
+- Continue to `SKILL_UPGRADE` only after the target operator is confirmed
+  in the training slot.
+
+The ordinary training-room protection must not delete a task with
+`meta_data="_mastery"`. The `assistant_follows_schedule=true` behavior,
+where the assistant slot follows the ordinary schedule, remains unchanged.
+
 ## Inventory Data Is Not Real-Time
 
 `cultivate.json` (Skland API snapshot) and `inventory` table (DepotSolver
@@ -177,6 +197,10 @@ MasterySync runs in `infra_main`'s `elif not self.todo_task:` branch
 
 If workshop tasks are densely packed (every 10 min), MasterySync may
 fire between them.
+
+## Tests Required
+
+- Mastery scheduling regression: false 模式下 `_mastery` 不被普通训练室保护逻辑跳过；目标训练位为空或错位时不点击专精，按 `plan_key` 去重并以 `now + 5 秒` 重试；true 模式保持兼容。
 
 ## Key Files
 

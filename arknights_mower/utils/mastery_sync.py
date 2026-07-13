@@ -356,12 +356,12 @@ class MasterySync:
             sk = str(skill_index + 1)
 
             if supports:
-                self._scheduler.tasks.append(
-                    SchedulerTask(
-                        task_plan={"train": [supports[0].name, name]},
-                        meta_data="_mastery",
-                    )
+                mastery_task = SchedulerTask(
+                    task_plan={"train": [supports[0].name, name]},
+                    meta_data="_mastery",
                 )
+                mastery_task.plan_key = f"{char_id}_{skill_index}"
+                self._scheduler.tasks.append(mastery_task)
 
             t = SchedulerTask(
                 time=datetime.now(),

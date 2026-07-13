@@ -1166,14 +1166,18 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             if swap_time <= datetime.now():
                 return
 
-            self.tasks.append(
-                SchedulerTask(
-                    time=swap_time,
-                    task_plan={"train": [support.swap_name, "Current"]},
-                    meta_data="_mastery",
-                    adjusted=True,
-                )
+            mastery_task = SchedulerTask(
+                time=swap_time,
+                task_plan={"train": [support.swap_name, "Current"]},
+                meta_data="_mastery",
+                adjusted=True,
             )
+            from arknights_mower.utils.mastery_db import get_in_progress_plan
+
+            plan = get_in_progress_plan()
+            if plan:
+                mastery_task.plan_key = f"{plan['char_id']}_{plan['skill_index']}"
+            self.tasks.append(mastery_task)
             self.tasks.append(
                 SchedulerTask(
                     time=swap_time + timedelta(seconds=1),
@@ -1448,8 +1452,102 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             save_exception(e)
             logger.exception(e)
 
+    def _mastery_target_name(self, plan_key):
+        if not plan_key:
+            return None
+        try:
+            char_id, _ = plan_key.rsplit("_", 1)
+            from arknights_mower.utils.mastery_recommendation import get_skill_data
+
+            return get_skill_data().get("characters", {}).get(char_id, {}).get("name")
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    def _mastery_target_in_training_room(self, plan_key):
+        target_name = self._mastery_target_name(plan_key)
+        if not target_name:
+            logger.warning(
+                f"skill_upgrade: cannot resolve mastery target plan_key={plan_key}"
+            )
+            return False
+        try:
+            current = self.get_agent_from_room("train")
+        except Exception as exc:
+            logger.warning(
+                f"skill_upgrade: training slot read failed, retrying mastery: {exc}"
+            )
+            return False
+        if not isinstance(current, (list, tuple)):
+            logger.warning(
+                f"skill_upgrade: invalid training slot read, value={current!r}"
+            )
+            return False
+        target = current[1] if len(current) > 1 else None
+        actual_name = target.get("agent") if isinstance(target, dict) else target
+        if actual_name == target_name:
+            return True
+        logger.warning(
+            f"skill_upgrade: mastery target not in training slot, "
+            f"target={target_name}, actual={actual_name}"
+        )
+        return False
+
+    def _retry_mastery_arrangement(self, plan_key, skill):
+        retry_time = datetime.now() + timedelta(seconds=5)
+        target_name = self._mastery_target_name(plan_key)
+        supports = self.op_data.skill_upgrade_supports
+        if not target_name or not supports:
+            return
+        self.tasks = [
+            task
+            for task in self.tasks
+            if not (
+                getattr(task, "plan_key", "") == plan_key
+                and task.meta_data == "_mastery"
+            )
+        ]
+        retry = SchedulerTask(
+            time=retry_time,
+            task_plan={"train": [supports[0].name, target_name]},
+            meta_data="_mastery",
+            adjusted=True,
+        )
+        retry.plan_key = plan_key
+        self.tasks.append(retry)
+        self.tasks = [
+            task
+            for task in self.tasks
+            if not (
+                task.type == TaskTypes.SKILL_UPGRADE
+                and getattr(task, "plan_key", "") == plan_key
+            )
+        ]
+        upgrade_retry = SchedulerTask(
+            time=retry_time + timedelta(seconds=1),
+            task_type=TaskTypes.SKILL_UPGRADE,
+            meta_data=skill,
+            adjusted=True,
+        )
+        upgrade_retry.plan_key = plan_key
+        self.tasks.append(upgrade_retry)
+        logger.info(
+            f"skill_upgrade: mastery arrangement not applied, retry at {retry_time} "
+            f"plan_key={plan_key}"
+        )
+
     def skill_upgrade(self, skill):
         try:
+            plan_key = getattr(self.task, "plan_key", "")
+            if plan_key and not self._mastery_target_name(plan_key):
+                raise ValueError(f"无法解析专精目标干员 plan_key={plan_key}")
+            if (
+                plan_key
+                and not config.conf.assistant_follows_schedule
+                and self.op_data.skill_upgrade_supports
+                and not self._mastery_target_in_training_room(plan_key)
+            ):
+                self._retry_mastery_arrangement(plan_key, skill)
+                return
             if "|" in skill:
                 skill = skill.split("|")[0]
             elif not skill.isdigit():
@@ -1676,13 +1774,13 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                 )
                 if support is not None:
                     if not config.conf.assistant_follows_schedule:
-                        self.tasks.append(
-                            SchedulerTask(
-                                task_plan={"train": [support.name, "Current"]},
-                                meta_data="_mastery",
-                                adjusted=True,
-                            )
+                        mastery_task = SchedulerTask(
+                            task_plan={"train": [support.name, "Current"]},
+                            meta_data="_mastery",
+                            adjusted=True,
                         )
+                        mastery_task.plan_key = getattr(self.task, "plan_key", "")
+                        self.tasks.append(mastery_task)
                         self.tasks.append(
                             SchedulerTask(
                                 time=datetime.now() + timedelta(seconds=5),
@@ -3652,6 +3750,14 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                 )
             )
 
+    def _should_protect_train_plan(self, room):
+        return (
+            room == "train"
+            and self.find_next_task(task_type=TaskTypes.SKILL_UPGRADE)
+            and self.task.meta_data != "_mastery"
+            and not config.conf.assistant_follows_schedule
+        )
+
     def agent_arrange_room(
         self, new_plan, room, plan, skip_enter=False, get_time=False
     ):
@@ -3662,14 +3768,9 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             try:
                 error_count = 0
                 if not skip_enter:
-                    if room == "train" and self.find_next_task(
-                        task_type=TaskTypes.SKILL_UPGRADE
-                    ):
-                        if config.conf.assistant_follows_schedule:
-                            pass
-                        else:
-                            del plan[room]
-                            return new_plan
+                    if self._should_protect_train_plan(room):
+                        del plan[room]
+                        return new_plan
                     self.enter_room(room)
                 self.turn_on_room_detail(room)
                 error_count = 0
