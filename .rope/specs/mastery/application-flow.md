@@ -108,17 +108,50 @@ if self.find("training_idle"):
     continue        # 跳过 OCR，循环重进走 upgrade
 ```
 
-### 断点C: in_progress 被 MasterySync 误杀
+### 断点C: in_progress 被 MasterySync 误杀 (FIXED)
 
 `_schedule_next` marks `in_progress(expires_at=NULL)` immediately, but
 training doesn't physically start until `skill_upgrade` confirm stage
-sets `expires_at`. In between, MasterySync may run again, see
-`in_progress` + `trainee=None` (Skland API), and mark `failed`.
+sets `expires_at`. In between, MasterySync may run again, read stale
+`player_info_cache` (from a prior successful fetch when training room was
+empty, so `trainee=None`), and mark `failed`.
 
-**Impact**: Plan killed before training starts.
-**Status**: Not yet fixed. Options: add a `scheduled` intermediate
-state, or skip failed-marking when `expires_at IS NULL AND created_at
-< N minutes ago`.
+Also triggered by transient Skland DNS failures: `_refresh_skland_data()`
+throws, but `sync_and_schedule` continues and reads the stale cache.
+
+**Impact**: Plan killed before training starts; even worse, when Skland
+is unreachable, a new pending plan may be scheduled and evict an
+operator already in training (because MasterySync doesn't know the
+training room state without Skland).
+
+**Fix** (commit 062a33a5): Introduced `skland_ok` flag. When
+`_refresh_skland_data()` fails:
+
+- Skip in_progress validation (keep plan alive, rely on in-game
+  `refresh_skill_time` to drive completion)
+- Skip pending scheduling entirely (don't risk evicting an operator
+  in training)
+
+```python
+skland_ok = True
+try:
+    self._refresh_skland_data()
+except Exception as e:
+    skland_ok = False
+
+if plan and not skland_ok:
+    # skip validation, keep plan
+elif plan:
+    # normal Skland-based validation
+
+if not skland_ok:
+    # don't schedule pending (could evict training operator)
+    return
+```
+
+**Trade-off**: Skland long-unreachable stalls new pending plans. But
+existing in_progress plans still advance via `refresh_skill_time`.
+Recovers automatically when Skland comes back.
 
 ## Inventory Data Is Not Real-Time
 
