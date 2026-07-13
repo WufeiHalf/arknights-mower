@@ -92,3 +92,20 @@ row (append-only). `pending` = awaiting scheduling. `in_progress` = training
 scheduled or running. `expires_at` is NULL until `skill_upgrade` confirm sets
 it. See `.rope/specs/mastery/application-flow.md`.
 _Avoid_: reusing a row's status field (always insert new).
+
+**cultivate.json**:
+Skland API snapshot at `tmp/cultivate.json` containing player inventory
+(`data.items`) and character cultivation data. Refreshed by
+`cultivate().start()` (Skland login -> GET cultivate/player). NOT refreshed
+by `/depot/readdepot` (read-only endpoint). Has a sync delay after in-game
+operations (minutes to tens of minutes). See
+`.rope/specs/depot/inventory-freshness.md`.
+_Avoid_: "仓库数据" when meaning the live game state (it's a cached snapshot).
+
+**self_upper_limit**:
+Workshop setting (`workshop_settings[].items[].self_upper_limit`): the
+target stock ceiling for a **synthesized material**. Mower triggers
+synthesis when `inventory[name] < self_upper_limit`. NOT a game warehouse
+capacity limit (the game has none) -- it's the target level mower maintains.
+Default 30. Pairs with `children_lower_limit` (sub-material floor).
+_Avoid_: "仓库上限", "材料上限" (ambiguous; sounds like a game constraint).
