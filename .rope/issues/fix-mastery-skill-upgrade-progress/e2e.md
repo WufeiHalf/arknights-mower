@@ -20,7 +20,9 @@ Failure Report:
 Forbidden Out-of-Scope Actions:
 - 不部署手机、不重启服务、不重置 DB。
 Result:
-- agent_passed: via HTTP proxy `127.0.0.1:8118`, mastery 16/16 + scheduler 14/14 + base_scheduler 7/7 passed; Ruff lint/format, compileall, and diff-check passed.
+- agent_passed: targeted `HTTP_PROXY=http://127.0.0.1:8118 HTTPS_PROXY=http://127.0.0.1:8118 ALL_PROXY=http://127.0.0.1:8118 uv run --with scikit-image --with opencv-python-headless --with pytz --with tzlocal --with requests --with pyyaml --with pydantic --with yamlcore --with colorlog --with scikit-learn --with jinja2 --with cryptography --with pandas --with evalidate --with rapidocr-onnxruntime --with beautifulsoup4 --with ruff python -m unittest arknights_mower.tests.mastery_skill_upgrade_tests arknights_mower.tests.scheduler_task_tests arknights_mower.tests.base_scheduler_tests`: 37/37 passed.
+- agent_passed: full `HTTP_PROXY=http://127.0.0.1:8118 HTTPS_PROXY=http://127.0.0.1:8118 ALL_PROXY=http://127.0.0.1:8118 uv run --python /usr/bin/python3.12 --with-requirements requirements.txt --with ruff python -m unittest discover -s arknights_mower/tests -p '*_tests.py'`: 81/81 passed.
+- agent_passed: Ruff lint/format, `venv/bin/python -m compileall -q arknights_mower`, and `git diff --check` passed. Python 3.13 full-dependency resolution was skipped because `onnxruntime==1.18.1` has no `cp313` wheel; the same full suite passed under the repository's Python 3.12 requirement.
 
 ## E2 Issue document consistency
 

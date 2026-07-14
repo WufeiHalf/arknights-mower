@@ -38,7 +38,9 @@ class MasterySync:
             logger.warning(f"MasterySync: Skland 刷新失败: {e}")
 
         # 用 Skland 数据同步 DB plan（Skland 不通则跳过校验，靠游戏内推进）
-        plan = get_in_progress_plan()
+        training_active = False
+        training_complete = False
+        plan = get_in_progress_plan(include_expired=True)
         if plan and not skland_ok:
             logger.info(
                 "MasterySync: Skland 不通，跳过 in_progress 校验，靠游戏内 refresh_skill_time 推进"
@@ -57,10 +59,13 @@ class MasterySync:
                 slot_state = training.get("slotState", 0)
                 trainee_char_id = training["trainee"]["charId"]
 
-                # 训练已完成 → 跳过，由 refresh_skill_time 处理
-                if remain_secs <= 0 or slot_state == 2:
+                # remainSecs 归零表示结果待收取；slotState=2 在训练进行中也会出现，
+                # 不能单独作为完成判据。保留 plan 并立即交给 refresh_skill_time 收取。
+                if remain_secs <= 0:
+                    training_complete = True
                     logger.info(
-                        f"MasterySync: training complete (remainSecs={remain_secs} slotState={slot_state}), skip sync"
+                        f"MasterySync: training complete (remainSecs={remain_secs} "
+                        f"slotState={slot_state}), scheduling collection"
                     )
                 elif trainee_char_id != plan["char_id"]:
                     logger.warning(
@@ -74,13 +79,10 @@ class MasterySync:
                     )
                     plan = None
                 else:
+                    training_active = True
                     # 更新 expires_at
                     expires_at_local = datetime.now() + timedelta(seconds=remain_secs)
-                    from datetime import timezone
-
-                    new_expires = (
-                        datetime.now(timezone.utc) + timedelta(seconds=remain_secs)
-                    ).strftime("%Y-%m-%d %H:%M:%S")
+                    new_expires = expires_at_local.strftime("%Y-%m-%d %H:%M:%S")
                     old_expires = plan.get("expires_at")
                     if (
                         not old_expires
@@ -144,7 +146,12 @@ class MasterySync:
 
         if plan:
             expires_at = plan.get("expires_at")
-            if not expires_at or datetime.fromisoformat(expires_at) > datetime.now():
+            if (
+                training_active
+                or training_complete
+                or not expires_at
+                or datetime.fromisoformat(expires_at) > datetime.now()
+            ):
                 logger.info("MasterySync: in_progress plan found, adding REFRESH_TIME")
                 self._scheduler.tasks.append(
                     SchedulerTask(

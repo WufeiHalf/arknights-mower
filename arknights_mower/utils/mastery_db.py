@@ -162,17 +162,21 @@ def has_in_progress_plan() -> bool:
         conn.close()
 
 
-def get_in_progress_plan() -> Optional[dict]:
+def get_in_progress_plan(include_expired: bool = False) -> Optional[dict]:
     conn = _db()
     try:
         _ensure_tables(conn)
-        row = conn.execute(
+        query = (
             "SELECT * FROM mastery_plan WHERE id IN ("
             "SELECT MAX(id) FROM mastery_plan GROUP BY char_id, skill_index"
             ") AND status='in_progress' "
-            "AND (expires_at IS NULL OR expires_at > datetime('now','localtime'))"
-            " LIMIT 1"
-        ).fetchone()
+        )
+        if not include_expired:
+            query += (
+                "AND (expires_at IS NULL OR expires_at > datetime('now','localtime')) "
+            )
+        query += "LIMIT 1"
+        row = conn.execute(query).fetchone()
         return dict(row) if row else None
     except Exception:
         return None

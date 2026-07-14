@@ -35,6 +35,81 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         task.plan_key = "char_0"
         return task
 
+    def test_mastery_sync_schedules_collection_for_expired_completed_training(self):
+        scheduler = MagicMock()
+        scheduler.tasks = []
+        training = {
+            "trainee": {"charId": "char", "targetSkill": 0},
+            "trainer": {"charId": "support"},
+            "remainSecs": 0,
+            "slotState": 2,
+        }
+        plan = {
+            "char_id": "char",
+            "skill_index": 0,
+            "level": 1,
+            "expires_at": "2026-07-13 22:12:37",
+        }
+        sync = MasterySync(scheduler)
+        with (
+            patch.object(sync, "_refresh_skland_data"),
+            patch(
+                "arknights_mower.utils.mastery_sync.has_train_group_plan",
+                return_value=False,
+            ),
+            patch(
+                "arknights_mower.utils.mastery_sync.get_in_progress_plan",
+                return_value=plan,
+            ),
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {"latest": {"building_training": training}},
+            ),
+        ):
+            sync.sync_and_schedule()
+
+        self.assertEqual(len(scheduler.tasks), 1)
+        self.assertEqual(scheduler.tasks[0].type, TaskTypes.REFRESH_TIME)
+        self.assertEqual(scheduler.tasks[0].meta_data, "train")
+
+    def test_mastery_sync_does_not_treat_slot_state_two_as_completion(self):
+        scheduler = MagicMock()
+        scheduler.tasks = []
+        training = {
+            "trainee": {"charId": "char", "targetSkill": 0},
+            "trainer": {"charId": "support"},
+            "remainSecs": 3600,
+            "slotState": 2,
+        }
+        plan = {
+            "char_id": "char",
+            "skill_index": 0,
+            "level": 1,
+            "expires_at": "2026-07-13 22:12:37",
+        }
+        sync = MasterySync(scheduler)
+        with (
+            patch.object(sync, "_refresh_skland_data"),
+            patch(
+                "arknights_mower.utils.mastery_sync.has_train_group_plan",
+                return_value=False,
+            ),
+            patch(
+                "arknights_mower.utils.mastery_sync.get_in_progress_plan",
+                return_value=plan,
+            ),
+            patch("arknights_mower.utils.mastery_sync.set_plan_status") as set_status,
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {"latest": {"building_training": training}},
+            ),
+        ):
+            sync.sync_and_schedule()
+
+        set_status.assert_called_once()
+        self.assertEqual(len(scheduler.tasks), 1)
+        self.assertEqual(scheduler.tasks[0].type, TaskTypes.REFRESH_TIME)
+
     def test_mastery_sync_links_arrangement_and_upgrade_by_plan_key(self):
         scheduler = MagicMock()
         scheduler.tasks = []
@@ -298,6 +373,70 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         self.assertEqual(len(mastery), 1)
         self.assertEqual(mastery[0].plan["train"][0], "正确助手")
         self.assertGreaterEqual(mastery[0].time, now + timedelta(seconds=5))
+
+    def test_refresh_skill_time_refreshes_snapshot_before_swap_calculation(self):
+        finish = datetime.now() + timedelta(hours=5)
+        support = MagicMock()
+        support.name = "罗宾"
+        support.swap = True
+        support.swap_name = "逻各斯"
+        self.solver.op_data.skill_upgrade_supports = [support]
+        self.solver.op_data.calculate_switch_time.return_value = 2
+        self.solver.train_scene = MagicMock(return_value=Scene.TRAIN_MAIN)
+        self.solver.double_read_time = MagicMock(return_value=finish)
+        self.solver.back = MagicMock()
+        self.solver.sleep = MagicMock()
+        with (
+            patch("arknights_mower.solvers.base_schedule.PlayerInfoClient") as client,
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {
+                    "latest": {
+                        "building_training": {
+                            "trainee": {"charId": "char", "targetSkill": 0},
+                            "trainer": {"charId": "robin"},
+                        }
+                    }
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_db.get_in_progress_plan",
+                return_value={
+                    "char_id": "char",
+                    "skill_index": 0,
+                    "level": 1,
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_recommendation.get_skill_data",
+                return_value={"characters": {"robin": {"name": "罗宾"}}},
+            ),
+            patch("arknights_mower.utils.mastery_db.set_plan_status"),
+        ):
+            self.solver.refresh_skill_time()
+
+        client.return_value.get_first_available_snapshot.assert_called_once_with()
+        mastery_tasks = [
+            task for task in self.solver.tasks if task.meta_data == "_mastery"
+        ]
+        self.assertEqual(len(mastery_tasks), 1)
+        self.assertEqual(mastery_tasks[0].plan["train"], ["逻各斯", "Current"])
+
+    def test_update_expires_at_uses_local_database_time(self):
+        completion_time = datetime(2026, 7, 14, 5, 17, 8)
+        with (
+            patch(
+                "arknights_mower.utils.mastery_db.get_in_progress_plan",
+                return_value={"char_id": "char", "skill_index": 0, "level": 1},
+            ),
+            patch("arknights_mower.utils.mastery_db.set_plan_status") as set_status,
+        ):
+            self.solver._update_expires_at(completion_time)
+
+        self.assertEqual(
+            set_status.call_args.kwargs["expires_at"],
+            "2026-07-14 05:17:08",
+        )
 
     def test_success_path_sets_expires_at_after_skill_selection(self):
         task = self._mastery_task()

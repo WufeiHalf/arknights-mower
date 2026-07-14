@@ -1028,11 +1028,20 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             if is_completed:
                 self._handle_training_complete()
             elif completion_time and completion_time > datetime.now():
+                self._refresh_training_snapshot()
                 self._update_expires_at(completion_time)
                 self._calculate_swap_from_api(completion_time)
         except Exception as e:
             save_exception(e)
             logger.exception(e)
+
+    def _refresh_training_snapshot(self):
+        try:
+            snapshot = PlayerInfoClient().get_first_available_snapshot()
+            if snapshot is None:
+                logger.warning("refresh_skill_time: no Skland training snapshot")
+        except Exception as e:
+            logger.warning(f"refresh_skill_time: Skland snapshot failed: {e}")
 
     def _handle_training_complete(self):
         try:
@@ -1058,7 +1067,7 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             skill_index = training["trainee"]["targetSkill"]
             logger.info(f"训练完成: char={char_id} skill_index={skill_index}")
 
-            plan = get_in_progress_plan()
+            plan = get_in_progress_plan(include_expired=True)
             if not plan:
                 logger.info(
                     "refresh_skill_time: no in_progress plan, skipping completion"
@@ -1094,19 +1103,14 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
 
     def _update_expires_at(self, completion_time):
         try:
-            from datetime import timezone
-
             from arknights_mower.utils.mastery_db import (
                 get_in_progress_plan,
                 set_plan_status,
             )
 
-            plan = get_in_progress_plan()
+            plan = get_in_progress_plan(include_expired=True)
             if plan:
-                duration = completion_time - datetime.now()
-                expires_at = (datetime.now(timezone.utc) + duration).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+                expires_at = completion_time.strftime("%Y-%m-%d %H:%M:%S")
                 set_plan_status(
                     plan["char_id"],
                     plan["skill_index"],
@@ -1183,7 +1187,7 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             )
             from arknights_mower.utils.mastery_db import get_in_progress_plan
 
-            plan = get_in_progress_plan()
+            plan = get_in_progress_plan(include_expired=True)
             if plan:
                 mastery_task.plan_key = f"{plan['char_id']}_{plan['skill_index']}"
             self.tasks.append(mastery_task)
@@ -1470,7 +1474,7 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
         from arknights_mower.utils.mastery_db import get_in_progress_plan
         from arknights_mower.utils.mastery_recommendation import get_skill_data
 
-        plan = get_in_progress_plan()
+        plan = get_in_progress_plan(include_expired=True)
         if not plan or plan.get("char_id") != char_id:
             return None
         try:
@@ -1740,16 +1744,13 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                             if plan_key:
                                 parts = plan_key.rsplit("_", 1)
                                 if len(parts) == 2:
-                                    from datetime import timezone
-
                                     from arknights_mower.utils.mastery_db import (
                                         set_plan_status,
                                     )
 
-                                    duration = execute_time - datetime.now()
-                                    expires_at = (
-                                        datetime.now(timezone.utc) + duration
-                                    ).strftime("%Y-%m-%d %H:%M:%S")
+                                    expires_at = execute_time.strftime(
+                                        "%Y-%m-%d %H:%M:%S"
+                                    )
                                     set_plan_status(
                                         parts[0],
                                         int(parts[1]),
