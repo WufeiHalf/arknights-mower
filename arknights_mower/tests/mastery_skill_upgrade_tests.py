@@ -35,6 +35,17 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         task.plan_key = "char_0"
         return task
 
+    def test_mastery_sync_detects_snapshot_older_than_current_plan(self):
+        training = {
+            "lastUpdateTime": datetime(2026, 7, 14, 16, 12, 46).timestamp(),
+        }
+        plan = {"created_at": "2026-07-14 16:15:46"}
+
+        self.assertTrue(MasterySync._training_snapshot_is_stale(training, plan))
+
+        training["lastUpdateTime"] = datetime(2026, 7, 14, 16, 16).timestamp()
+        self.assertFalse(MasterySync._training_snapshot_is_stale(training, plan))
+
     def test_mastery_sync_schedules_collection_for_expired_completed_training(self):
         scheduler = MagicMock()
         scheduler.tasks = []
@@ -414,12 +425,22 @@ class TestMasterySkillUpgrade(unittest.TestCase):
             patch("arknights_mower.utils.mastery_db.set_plan_status"),
         ):
             self.solver.refresh_skill_time()
+            self.solver.refresh_skill_time()
 
-        client.return_value.get_first_available_snapshot.assert_called_once_with()
+        self.assertEqual(
+            client.return_value.get_first_available_snapshot.call_count,
+            2,
+        )
         mastery_tasks = [
             task for task in self.solver.tasks if task.meta_data == "_mastery"
         ]
+        refresh_tasks = [
+            task
+            for task in self.solver.tasks
+            if task.type == TaskTypes.REFRESH_TIME and task.meta_data == "train"
+        ]
         self.assertEqual(len(mastery_tasks), 1)
+        self.assertEqual(len(refresh_tasks), 1)
         self.assertEqual(mastery_tasks[0].plan["train"], ["逻各斯", "Current"])
 
     def test_update_expires_at_uses_local_database_time(self):

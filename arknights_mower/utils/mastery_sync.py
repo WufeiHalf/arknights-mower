@@ -60,8 +60,17 @@ class MasterySync:
                 trainee_char_id = training["trainee"]["charId"]
 
                 # remainSecs 归零表示结果待收取；slotState=2 在训练进行中也会出现，
-                # 不能单独作为完成判据。保留 plan 并立即交给 refresh_skill_time 收取。
-                if remain_secs <= 0:
+                # 不能单独作为完成判据。新训练刚开始时森空岛可能仍返回上一次训练的
+                # remainSecs=0，需用快照更新时间与当前计划创建时间排除陈旧快照。
+                if remain_secs <= 0 and self._training_snapshot_is_stale(
+                    training, plan
+                ):
+                    training_active = True
+                    logger.info(
+                        "MasterySync: stale completed training snapshot, "
+                        "keeping current plan active"
+                    )
+                elif remain_secs <= 0:
                     training_complete = True
                     logger.info(
                         f"MasterySync: training complete (remainSecs={remain_secs} "
@@ -186,6 +195,15 @@ class MasterySync:
             return
 
         self._schedule_next(remaining[0])
+
+    @staticmethod
+    def _training_snapshot_is_stale(training, plan):
+        try:
+            snapshot_time = datetime.fromtimestamp(training["lastUpdateTime"])
+            plan_time = datetime.fromisoformat(plan["created_at"])
+            return snapshot_time < plan_time
+        except (KeyError, TypeError, ValueError, OSError):
+            return False
 
     def _refresh_skland_data(self):
         from arknights_mower.solvers.cultivate_depot import cultivate

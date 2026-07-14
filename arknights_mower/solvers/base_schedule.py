@@ -1190,6 +1190,46 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             plan = get_in_progress_plan(include_expired=True)
             if plan:
                 mastery_task.plan_key = f"{plan['char_id']}_{plan['skill_index']}"
+                duplicate_swap_times = [
+                    queued.time
+                    for queued in self.tasks
+                    if queued.meta_data == "_mastery"
+                    and getattr(queued, "plan_key", "") == mastery_task.plan_key
+                    and queued.plan == {"train": [support.swap_name, "Current"]}
+                ]
+                if duplicate_swap_times:
+                    self.tasks[:] = [
+                        queued
+                        for queued in self.tasks
+                        if not (
+                            (
+                                queued.meta_data == "_mastery"
+                                and getattr(queued, "plan_key", "")
+                                == mastery_task.plan_key
+                                and queued.plan
+                                == {"train": [support.swap_name, "Current"]}
+                            )
+                            or (
+                                queued.type == TaskTypes.REFRESH_TIME
+                                and queued.meta_data == "train"
+                                and any(
+                                    abs(
+                                        (
+                                            queued.time
+                                            - old_swap_time
+                                            - timedelta(seconds=1)
+                                        ).total_seconds()
+                                    )
+                                    < 2
+                                    for old_swap_time in duplicate_swap_times
+                                )
+                            )
+                        )
+                    ]
+                    logger.debug(
+                        "refresh_skill_time: replaced duplicate mastery swap "
+                        f"plan_key={mastery_task.plan_key}"
+                    )
             self.tasks.append(mastery_task)
             self.tasks.append(
                 SchedulerTask(
