@@ -1050,8 +1050,6 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                 get_in_progress_plan,
                 insert_plan,
             )
-            from arknights_mower.utils.mastery_recommendation import get_skill_data
-            from arknights_mower.utils.scheduler_task import TaskTypes
 
             latest = player_info_cache.get("latest", {})
             training = (
@@ -1086,18 +1084,9 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                     f"专精{plan_level}完成，添加 pending(level={plan_level + 1})"
                 )
 
-                char_table = get_skill_data().get("characters", {})
-                name = char_table.get(char_id, {}).get("name", char_id)
-                sk = str(skill_index + 1)
-                t = SchedulerTask(
-                    time=datetime.now(),
-                    task_type=TaskTypes.SKILL_UPGRADE,
-                    meta_data=f"{name} 技能{sk}",
-                    adjusted=True,
+                logger.info(
+                    "下一级专精交给 MasterySync 调度，等待其选择协助位并创建技能任务"
                 )
-                t.plan_key = f"{char_id}_{skill_index}"
-                self.tasks.append(t)
-                logger.info(f"触发下一级专精: {name} 技能{sk}")
         except Exception as e:
             logger.debug(f"refresh_skill_time: _handle_training_complete failed: {e}")
 
@@ -1676,13 +1665,16 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
         try:
             plan_key = getattr(self.task, "plan_key", "")
             mastery_support = None
+            mastery_plan = None
             if not config.conf.assistant_follows_schedule:
-                if not plan_key or self._mastery_context(plan_key) is None:
+                mastery_context = self._mastery_context(plan_key)
+                if not plan_key or mastery_context is None:
                     logger.warning(
                         f"skill_upgrade: invalid mastery plan_key={plan_key}, "
                         "skip skill selection"
                     )
                     return
+                mastery_plan = mastery_context[0]
                 mastery_support = self._mastery_support_for_plan(plan_key)
                 if mastery_support is None:
                     self._requeue_mastery_upgrade(plan_key, skill)
@@ -1815,13 +1807,18 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                             ((94, 998), (223, 1048)),
                             use_digit_reader=True,
                         )
-                        hours = (finish_time - datetime.now()).total_seconds() / 3600
-                        if hours > 23:
-                            level = 3
-                        elif hours > 15:
-                            level = 2
+                        if mastery_plan is not None:
+                            level = mastery_plan.get("level", 1)
                         else:
-                            level = 1
+                            hours = (
+                                finish_time - datetime.now()
+                            ).total_seconds() / 3600
+                            if hours > 23:
+                                level = 3
+                            elif hours > 15:
+                                level = 2
+                            else:
+                                level = 1
                         logger.info(f"本次专精将提升{skill}技能至{level}")
                         self.tap((self.recog.w * 0.87, self.recog.h * 0.9))
                         del tasks[0]
@@ -1831,19 +1828,22 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                         self.back()
                 elif scene == Scene.TRAIN_SKILL_UPGRADE_ERROR:
                     if tasks[0] == "confirm":
-                        level = 1
-                        finish_time = self.double_read_time(
-                            ((94, 998), (223, 1048)),
-                            use_digit_reader=True,
-                        )
-                        if finish_time:
-                            hours = (
-                                finish_time - datetime.now()
-                            ).total_seconds() / 3600
-                            if hours > 23:
-                                level = 3
-                            elif hours > 15:
-                                level = 2
+                        if mastery_plan is not None:
+                            level = mastery_plan.get("level", 1)
+                        else:
+                            level = 1
+                            finish_time = self.double_read_time(
+                                ((94, 998), (223, 1048)),
+                                use_digit_reader=True,
+                            )
+                            if finish_time:
+                                hours = (
+                                    finish_time - datetime.now()
+                                ).total_seconds() / 3600
+                                if hours > 23:
+                                    level = 3
+                                elif hours > 15:
+                                    level = 2
                         msg = f"专精{skill}技能 level {level} 材料不足，已标记失败"
                         logger.warning(msg)
                         send_message(msg, level="ERROR")
@@ -1860,6 +1860,7 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                                     int(parts[1]),
                                     "failed",
                                     f"材料不足 level{level}",
+                                    level=level,
                                 )
                         self.back()
                         return

@@ -379,10 +379,56 @@ class MasterySync:
 
             name = char_info.get("name", char_id)
             sk = str(skill_index + 1)
+            support = next(
+                (item for item in supports if item.level == plan_level),
+                None,
+            )
+            if support is None:
+                msg = f"{prof_cn} 路线缺少 level={plan_level} 的协助位配置"
+                logger.warning(f"MasterySync: {msg}")
+                insert_plan(char_id, skill_index, "failed", failed_reason=msg)
+                return
+
+            # If the previous level used a delayed swap, keep that assistant in
+            # place long enough to start this level and consume its next-training
+            # effect. The successful skill_upgrade path swaps to `support` after
+            # the new training countdown has been confirmed.
+            arrangement_support = support.name
+            if plan_level > 1:
+                previous = next(
+                    (item for item in supports if item.level == plan_level - 1),
+                    None,
+                )
+                if previous and previous.swap and previous.swap_name:
+                    from arknights_mower.solvers.player_info import player_info_cache
+
+                    latest = player_info_cache.get("latest", {})
+                    training = (
+                        latest.get("building_training")
+                        if isinstance(latest, dict)
+                        else None
+                    )
+                    trainer = training.get("trainer") if training else None
+                    trainee = training.get("trainee") if training else None
+                    trainer_name = (
+                        char_table.get(trainer.get("charId"), {}).get("name")
+                        if isinstance(trainer, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(trainee, dict)
+                        and trainee.get("charId") == char_id
+                        and trainer_name == previous.swap_name
+                    ):
+                        arrangement_support = "Current"
+                        logger.info(
+                            "MasterySync: keeping previous swap assistant "
+                            f"{trainer_name} for level={plan_level} start"
+                        )
 
             if supports:
                 mastery_task = SchedulerTask(
-                    task_plan={"train": [supports[0].name, name]},
+                    task_plan={"train": [arrangement_support, name]},
                     meta_data="_mastery",
                 )
                 mastery_task.plan_key = f"{char_id}_{skill_index}"

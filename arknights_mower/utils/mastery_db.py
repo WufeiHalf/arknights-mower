@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from typing import Optional
 
@@ -302,7 +303,19 @@ def get_user_routes() -> list[dict]:
 
 
 def retry_plan(char_id: str, skill_index: int, skill_name: Optional[str] = None) -> int:
-    return insert_plan(char_id, skill_index, "pending", skill_name=skill_name)
+    current = get_current_plan(char_id, skill_index)
+    level = current.get("level", 1) if current else 1
+    if current and current.get("status") == "failed":
+        match = re.search(r"level(\d+)", current.get("failed_reason") or "")
+        if match:
+            level = int(match.group(1))
+    return insert_plan(
+        char_id,
+        skill_index,
+        "pending",
+        level=level,
+        skill_name=skill_name,
+    )
 
 
 def has_train_group_plan() -> bool:

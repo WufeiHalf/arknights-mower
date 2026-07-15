@@ -36,20 +36,26 @@ infra_main -> todo_task stage -> MasterySync.sync_and_schedule()
   ├─ _auto_complete_level3 (cultivate.json already-done levels)
   └─ pending exists -> _schedule_next:
       ├─ DB: pending -> in_progress (expires_at=NULL)
-      ├─ Enqueue: 上班任务 {train: [support, trainee]} meta=_mastery
+      ├─ Select support by target plan level, not route-list position
+      ├─ If the previous level's swap assistant is still present, enqueue
+      │  {train: [Current, trainee]} so its next-training effect is consumed
+      ├─ Otherwise enqueue {train: [level_support, trainee]} meta=_mastery
       └─ Enqueue: SKILL_UPGRADE {meta: "name 技能N"}
 
 infra_main consumes queue:
   ├─ 上班任务 -> agent_arrange -> support+trainee enter train room
   └─ SKILL_UPGRADE -> skill_upgrade("name 技能N"):
       tasks = ["collect", "upgrade", "confirm"]
+      自动计划的目标等级来自 mastery_plan.level，不从倒计时反推
       ├─ collect: 收取上次训练结果 (training_idle -> skip, training_completed -> tap)
       ├─ upgrade: 进技能选择 -> 选技能 -> 确认
       └─ confirm: 读倒计时 -> set_plan_status(in_progress, expires_at)
                     ↑ 训练真正开始
+                    └─ 成功后才按当前等级创建协助位换人任务
 
 refresh_skill_time (REFRESH_TIME task):
   ├─ 训练完成 -> _handle_training_complete -> completed (+pending next level)
+  │                不直接创建 SKILL_UPGRADE；由下一次 MasterySync 统一调度
   └─ 未完成 -> 更新expires_at + _calculate_swap_from_api
 ```
 
@@ -154,6 +160,10 @@ existing in_progress plans still advance via `refresh_skill_time`.
 Recovers automatically when Skland comes back.
 
 ## Mastery Room Retry Contract
+
+A failed plan must retain its target `level`. For legacy material failures that
+were stored with the default `level=1`, `retry_plan()` recovers the target from
+the `failed_reason="材料不足 levelN"` suffix before inserting the new pending row.
 
 In `assistant_follows_schedule=false` mode, the `_mastery` temporary
 training-room task created by `MasterySync` must run before its

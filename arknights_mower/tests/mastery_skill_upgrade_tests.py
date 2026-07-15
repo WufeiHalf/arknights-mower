@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import arknights_mower.solvers.base_schedule as base_schedule
 from arknights_mower.solvers.base_schedule import BaseSchedulerSolver
+from arknights_mower.utils import mastery_db
 from arknights_mower.utils.mastery_sync import MasterySync
 from arknights_mower.utils.recognize import Scene
 from arknights_mower.utils.scheduler_task import SchedulerTask, TaskTypes
@@ -153,6 +154,231 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         self.assertEqual(scheduler.tasks[0].plan_key, "char_0")
         self.assertEqual(scheduler.tasks[1].plan_key, "char_0")
         insert_plan.assert_called_once()
+
+    def test_schedule_next_selects_support_for_target_level(self):
+        scheduler = MagicMock()
+        scheduler.tasks = []
+        support1 = MagicMock(level=1, swap=True, swap_name="逻各斯")
+        support1.name = "罗宾"
+        support2 = MagicMock(level=2, swap=True, swap_name="逻各斯")
+        support2.name = "罗宾"
+        support3 = MagicMock(level=3, swap=False, swap_name="逻各斯")
+        support3.name = "望"
+        with (
+            patch(
+                "arknights_mower.utils.mastery_sync.get_skill_data",
+                return_value={
+                    "characters": {"char": {"name": "目标", "profession": "P"}}
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_sync.get_route",
+                return_value={"supports": "[]"},
+            ),
+            patch("arknights_mower.utils.mastery_sync.insert_plan"),
+            patch(
+                "arknights_mower.utils.mastery_recommendation._supports_from_dicts",
+                return_value=[support1, support2, support3],
+            ),
+        ):
+            MasterySync(scheduler)._schedule_next(
+                {"char_id": "char", "skill_index": 0, "level": 3}
+            )
+
+        self.assertEqual(scheduler.tasks[0].plan["train"], ["望", "目标"])
+
+    def test_schedule_next_keeps_logos_for_next_mastery(self):
+        scheduler = MagicMock()
+        scheduler.tasks = []
+        support1 = MagicMock(level=1, swap=True, swap_name="逻各斯")
+        support1.name = "罗宾"
+        support2 = MagicMock(level=2, swap=True, swap_name="逻各斯")
+        support2.name = "罗宾"
+        support3 = MagicMock(level=3, swap=False, swap_name="逻各斯")
+        support3.name = "望"
+        training = {
+            "trainee": {"charId": "char", "targetSkill": 0},
+            "trainer": {"charId": "logos"},
+            "remainSecs": 0,
+        }
+        with (
+            patch(
+                "arknights_mower.utils.mastery_sync.get_skill_data",
+                return_value={
+                    "characters": {
+                        "char": {"name": "目标", "profession": "P"},
+                        "logos": {"name": "逻各斯"},
+                    }
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_sync.get_route",
+                return_value={"supports": "[]"},
+            ),
+            patch("arknights_mower.utils.mastery_sync.insert_plan"),
+            patch(
+                "arknights_mower.utils.mastery_recommendation._supports_from_dicts",
+                return_value=[support1, support2, support3],
+            ),
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {"latest": {"building_training": training}},
+            ),
+        ):
+            MasterySync(scheduler)._schedule_next(
+                {"char_id": "char", "skill_index": 0, "level": 3}
+            )
+
+        self.assertEqual(scheduler.tasks[0].plan["train"], ["Current", "目标"])
+
+    def test_mastery_completion_only_creates_pending_next_level(self):
+        training = {
+            "trainee": {"charId": "char", "targetSkill": 0},
+        }
+        self.solver.tasks = []
+        with (
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {"latest": {"building_training": training}},
+            ),
+            patch(
+                "arknights_mower.utils.mastery_db.get_in_progress_plan",
+                return_value={"char_id": "char", "skill_index": 0, "level": 2},
+            ),
+            patch("arknights_mower.utils.mastery_db.insert_plan") as insert_plan,
+            patch(
+                "arknights_mower.utils.mastery_recommendation.get_skill_data",
+                return_value={"characters": {"char": {"name": "目标"}}},
+            ),
+        ):
+            self.solver._handle_training_complete()
+
+        self.assertEqual(insert_plan.call_count, 2)
+        self.assertEqual(insert_plan.call_args_list[0].args[2], "completed")
+        self.assertEqual(insert_plan.call_args_list[1].args[2], "pending")
+        self.assertEqual(self.solver.tasks, [])
+
+    def test_half_duration_mastery_uses_plan_level(self):
+        task = self._mastery_task()
+        self.solver.task = task
+        support = MagicMock(level=3)
+        support.name = "望"
+        self.solver.op_data.skill_upgrade_supports = [support]
+        finish = datetime.now() + timedelta(hours=12)
+        self.solver.train_scene = MagicMock(
+            side_effect=[
+                Scene.TRAIN_MAIN,
+                Scene.TRAIN_MAIN,
+                Scene.TRAIN_SKILL_SELECT,
+                Scene.TRAIN_SKILL_UPGRADE,
+                Scene.TRAIN_SKILL_UPGRADE,
+                Scene.TRAIN_MAIN,
+            ]
+        )
+        self.solver.find = MagicMock(side_effect=[None, True])
+        self.solver.double_read_time = MagicMock(side_effect=[finish, finish, finish])
+        self.solver.tap = MagicMock()
+        self.solver.ctap = MagicMock()
+        self.solver.sleep = MagicMock()
+        self.solver.back = MagicMock()
+        self.solver.recog = MagicMock(w=1000, h=1000)
+        with (
+            patch.object(
+                base_schedule.config.conf, "assistant_follows_schedule", False
+            ),
+            patch.object(
+                self.solver,
+                "_mastery_context",
+                return_value=({"level": 3}, {}, "目标", 0),
+            ),
+            patch.object(
+                self.solver, "_mastery_target_in_training_room", return_value=True
+            ),
+            patch("arknights_mower.utils.mastery_db.set_plan_status") as set_status,
+        ):
+            self.solver.skill_upgrade(task.meta_data)
+
+        self.assertTrue(
+            any(
+                call.args[2] == "in_progress" and call.kwargs["level"] == 3
+                for call in set_status.call_args_list
+            )
+        )
+        mastery_tasks = [
+            queued for queued in self.solver.tasks if queued.meta_data == "_mastery"
+        ]
+        self.assertEqual(len(mastery_tasks), 1)
+        self.assertEqual(mastery_tasks[0].plan["train"], ["望", "Current"])
+
+    def test_material_failure_keeps_carryover_assistant(self):
+        task = self._mastery_task()
+        self.solver.task = task
+        support = MagicMock(level=3)
+        support.name = "望"
+        self.solver.op_data.skill_upgrade_supports = [support]
+        finish = datetime.now() + timedelta(hours=12)
+        self.solver.train_scene = MagicMock(
+            side_effect=[
+                Scene.TRAIN_MAIN,
+                Scene.TRAIN_MAIN,
+                Scene.TRAIN_SKILL_SELECT,
+                Scene.TRAIN_SKILL_UPGRADE,
+                Scene.TRAIN_SKILL_UPGRADE_ERROR,
+            ]
+        )
+        self.solver.find = MagicMock(side_effect=[None, True])
+        self.solver.double_read_time = MagicMock(return_value=finish)
+        self.solver.tap = MagicMock()
+        self.solver.ctap = MagicMock()
+        self.solver.sleep = MagicMock()
+        self.solver.back = MagicMock()
+        self.solver.recog = MagicMock(w=1000, h=1000)
+        with (
+            patch.object(
+                base_schedule.config.conf, "assistant_follows_schedule", False
+            ),
+            patch.object(
+                self.solver,
+                "_mastery_context",
+                return_value=({"level": 3}, {}, "目标", 0),
+            ),
+            patch.object(
+                self.solver, "_mastery_target_in_training_room", return_value=True
+            ),
+            patch("arknights_mower.utils.mastery_db.set_plan_status") as set_status,
+            patch("arknights_mower.solvers.base_schedule.send_message"),
+        ):
+            self.solver.skill_upgrade(task.meta_data)
+
+        self.assertTrue(
+            any(
+                call.args[2] == "failed"
+                and call.args[3] == "材料不足 level3"
+                and call.kwargs["level"] == 3
+                for call in set_status.call_args_list
+            )
+        )
+        self.assertFalse(
+            any(queued.meta_data == "_mastery" for queued in self.solver.tasks)
+        )
+
+    def test_retry_restores_level_from_legacy_failure_reason(self):
+        with (
+            patch.object(
+                mastery_db,
+                "get_current_plan",
+                return_value={
+                    "status": "failed",
+                    "level": 1,
+                    "failed_reason": "材料不足 level3",
+                },
+            ),
+            patch.object(mastery_db, "insert_plan", return_value=123) as insert_plan,
+        ):
+            plan_id = mastery_db.retry_plan("char", 0)
+
+        self.assertEqual(plan_id, 123)
+        self.assertEqual(insert_plan.call_args.kwargs["level"], 3)
 
     def test_mastery_task_is_not_protected_in_false_mode(self):
         self.solver.tasks = [SchedulerTask(task_type=TaskTypes.SKILL_UPGRADE)]
