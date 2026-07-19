@@ -59,6 +59,23 @@ refresh_skill_time (REFRESH_TIME task):
   └─ 未完成 -> 更新expires_at + _calculate_swap_from_api
 ```
 
+## Mid-swap Contract (减半换人)
+
+`_calculate_swap_from_api` must select the route entry by **current
+`mastery_plan.level`**, never by matching the Skland trainer name.
+
+- L1/L2 with `swap=true`: schedule `{train: [swap_name, Current]}`
+- L3 with `swap=false`: never schedule mid-swap, even if snapshot still
+  shows a previous-level assistant (e.g. 罗宾 after L2)
+- Specialty full flow (example):
+  - L1: 罗宾 start → mid-swap 逻各斯
+  - L2: keep 逻各斯 start → put 罗宾 → mid-swap 逻各斯
+  - L3: keep 逻各斯 start → put 望 → no mid-swap
+
+Reason: Skland `building_training` can lag across level boundaries;
+matching by trainer name reuses the previous level's `swap` flag and
+incorrectly demotes L3 assistants like 望 to 逻各斯.
+
 ## DB State Machine
 
 ```

@@ -1117,47 +1117,54 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
     def _calculate_swap_from_api(self, completion_time):
         try:
             from arknights_mower.solvers.player_info import player_info_cache
+            from arknights_mower.utils.mastery_db import get_in_progress_plan
 
             remaining_h = (completion_time - datetime.now()).total_seconds() / 3600
             if remaining_h <= 0:
+                return
+
+            plan = get_in_progress_plan(include_expired=True)
+            if not plan:
+                return
+
+            if len(self.op_data.skill_upgrade_supports) == 0:
+                return
+
+            # Mid-swap must follow the current plan level's route entry, not the
+            # trainer name in Skland snapshot (which can lag across levels).
+            plan_level = plan.get("level", 1)
+            support = next(
+                (
+                    s
+                    for s in self.op_data.skill_upgrade_supports
+                    if s.level == plan_level
+                ),
+                None,
+            )
+            if not support or not support.swap:
                 return
 
             latest = player_info_cache.get("latest", {})
             training = (
                 latest.get("building_training") if isinstance(latest, dict) else None
             )
-            if not training or not isinstance(training.get("trainer"), dict):
-                return
+            if training and isinstance(training.get("trainer"), dict):
+                trainer_char_id = training["trainer"]["charId"]
+                from arknights_mower.utils.mastery_recommendation import get_skill_data
 
-            trainer_char_id = training["trainer"]["charId"]
-            from arknights_mower.utils.mastery_recommendation import get_skill_data
-
-            trainer_name = (
-                get_skill_data()
-                .get("characters", {})
-                .get(trainer_char_id, {})
-                .get("name")
-            )
-            if not trainer_name:
-                return
-
-            if trainer_name in {"逻各斯", "艾丽妮"}:
-                logger.debug("refresh_skill_time: assistant already optimal, skip swap")
-                return
-
-            if len(self.op_data.skill_upgrade_supports) == 0:
-                return
-
-            support = next(
-                (
-                    s
-                    for s in self.op_data.skill_upgrade_supports
-                    if s.name == trainer_name
-                ),
-                None,
-            )
-            if not support or not support.swap:
-                return
+                trainer_name = (
+                    get_skill_data()
+                    .get("characters", {})
+                    .get(trainer_char_id, {})
+                    .get("name")
+                )
+                if trainer_name in {"逻各斯", "艾丽妮"} or (
+                    trainer_name and trainer_name == support.swap_name
+                ):
+                    logger.debug(
+                        "refresh_skill_time: assistant already optimal, skip swap"
+                    )
+                    return
 
             h = self.op_data.calculate_switch_time(support, hour=remaining_h)
             if h <= 0:
@@ -1174,51 +1181,45 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                 meta_data="_mastery",
                 adjusted=True,
             )
-            from arknights_mower.utils.mastery_db import get_in_progress_plan
-
-            plan = get_in_progress_plan(include_expired=True)
-            if plan:
-                mastery_task.plan_key = f"{plan['char_id']}_{plan['skill_index']}"
-                duplicate_swap_times = [
-                    queued.time
+            mastery_task.plan_key = f"{plan['char_id']}_{plan['skill_index']}"
+            duplicate_swap_times = [
+                queued.time
+                for queued in self.tasks
+                if queued.meta_data == "_mastery"
+                and getattr(queued, "plan_key", "") == mastery_task.plan_key
+                and queued.plan == {"train": [support.swap_name, "Current"]}
+            ]
+            if duplicate_swap_times:
+                self.tasks[:] = [
+                    queued
                     for queued in self.tasks
-                    if queued.meta_data == "_mastery"
-                    and getattr(queued, "plan_key", "") == mastery_task.plan_key
-                    and queued.plan == {"train": [support.swap_name, "Current"]}
-                ]
-                if duplicate_swap_times:
-                    self.tasks[:] = [
-                        queued
-                        for queued in self.tasks
-                        if not (
-                            (
-                                queued.meta_data == "_mastery"
-                                and getattr(queued, "plan_key", "")
-                                == mastery_task.plan_key
-                                and queued.plan
-                                == {"train": [support.swap_name, "Current"]}
-                            )
-                            or (
-                                queued.type == TaskTypes.REFRESH_TIME
-                                and queued.meta_data == "train"
-                                and any(
-                                    abs(
-                                        (
-                                            queued.time
-                                            - old_swap_time
-                                            - timedelta(seconds=1)
-                                        ).total_seconds()
-                                    )
-                                    < 2
-                                    for old_swap_time in duplicate_swap_times
+                    if not (
+                        (
+                            queued.meta_data == "_mastery"
+                            and getattr(queued, "plan_key", "") == mastery_task.plan_key
+                            and queued.plan == {"train": [support.swap_name, "Current"]}
+                        )
+                        or (
+                            queued.type == TaskTypes.REFRESH_TIME
+                            and queued.meta_data == "train"
+                            and any(
+                                abs(
+                                    (
+                                        queued.time
+                                        - old_swap_time
+                                        - timedelta(seconds=1)
+                                    ).total_seconds()
                                 )
+                                < 2
+                                for old_swap_time in duplicate_swap_times
                             )
                         )
-                    ]
-                    logger.debug(
-                        "refresh_skill_time: replaced duplicate mastery swap "
-                        f"plan_key={mastery_task.plan_key}"
                     )
+                ]
+                logger.debug(
+                    "refresh_skill_time: replaced duplicate mastery swap "
+                    f"plan_key={mastery_task.plan_key}"
+                )
             self.tasks.append(mastery_task)
             self.tasks.append(
                 SchedulerTask(

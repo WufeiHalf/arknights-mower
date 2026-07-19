@@ -611,10 +611,200 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         self.assertEqual(mastery[0].plan["train"][0], "正确助手")
         self.assertGreaterEqual(mastery[0].time, now + timedelta(seconds=5))
 
+    def test_level3_no_mid_swap_even_if_stale_snapshot_shows_previous_assistant(self):
+        """L3 swap=false must win over a stale trainer name from lower levels."""
+        finish = datetime.now() + timedelta(hours=12)
+        support1 = MagicMock(level=1, swap=True, swap_name="逻各斯")
+        support1.name = "罗宾"
+        support2 = MagicMock(level=2, swap=True, swap_name="逻各斯")
+        support2.name = "罗宾"
+        support3 = MagicMock(level=3, swap=False, swap_name="逻各斯")
+        support3.name = "望"
+        self.solver.op_data.skill_upgrade_supports = [support1, support2, support3]
+        self.solver.op_data.calculate_switch_time.return_value = 4
+        self.solver.train_scene = MagicMock(return_value=Scene.TRAIN_MAIN)
+        self.solver.double_read_time = MagicMock(return_value=finish)
+        self.solver.back = MagicMock()
+        self.solver.sleep = MagicMock()
+
+        with (
+            patch("arknights_mower.solvers.base_schedule.PlayerInfoClient"),
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {
+                    "latest": {
+                        "building_training": {
+                            "trainee": {"charId": "char", "targetSkill": 0},
+                            # Stale: previous level's assistant still in snapshot
+                            "trainer": {"charId": "robin"},
+                        }
+                    }
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_db.get_in_progress_plan",
+                return_value={
+                    "char_id": "char",
+                    "skill_index": 0,
+                    "level": 3,
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_recommendation.get_skill_data",
+                return_value={"characters": {"robin": {"name": "罗宾"}}},
+            ),
+            patch("arknights_mower.utils.mastery_db.set_plan_status"),
+        ):
+            self.solver.refresh_skill_time()
+
+        mid_swaps = [
+            task
+            for task in self.solver.tasks
+            if task.meta_data == "_mastery"
+            and task.plan == {"train": ["逻各斯", "Current"]}
+        ]
+        self.assertEqual(mid_swaps, [])
+
+    def _specialty_route_supports(self):
+        support1 = MagicMock(level=1, swap=True, swap_name="逻各斯")
+        support1.name = "罗宾"
+        support2 = MagicMock(level=2, swap=True, swap_name="逻各斯")
+        support2.name = "罗宾"
+        support3 = MagicMock(level=3, swap=False, swap_name="逻各斯")
+        support3.name = "望"
+        return [support1, support2, support3]
+
+    def _mid_swap_to_logos(self):
+        return [
+            task
+            for task in self.solver.tasks
+            if task.meta_data == "_mastery"
+            and task.plan == {"train": ["逻各斯", "Current"]}
+        ]
+
+    def _run_refresh_for_level(self, level, trainer_char_id, trainer_name, hours=8):
+        finish = datetime.now() + timedelta(hours=hours)
+        self.solver.tasks = []
+        self.solver.op_data.skill_upgrade_supports = self._specialty_route_supports()
+        self.solver.op_data.calculate_switch_time.return_value = 3
+        self.solver.train_scene = MagicMock(return_value=Scene.TRAIN_MAIN)
+        self.solver.double_read_time = MagicMock(return_value=finish)
+        self.solver.back = MagicMock()
+        self.solver.sleep = MagicMock()
+        with (
+            patch("arknights_mower.solvers.base_schedule.PlayerInfoClient"),
+            patch(
+                "arknights_mower.solvers.player_info.player_info_cache",
+                {
+                    "latest": {
+                        "building_training": {
+                            "trainee": {"charId": "char", "targetSkill": 0},
+                            "trainer": {"charId": trainer_char_id},
+                        }
+                    }
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_db.get_in_progress_plan",
+                return_value={
+                    "char_id": "char",
+                    "skill_index": 0,
+                    "level": level,
+                },
+            ),
+            patch(
+                "arknights_mower.utils.mastery_recommendation.get_skill_data",
+                return_value={"characters": {trainer_char_id: {"name": trainer_name}}},
+            ),
+            patch("arknights_mower.utils.mastery_db.set_plan_status"),
+        ):
+            self.solver.refresh_skill_time()
+
+    def test_level1_mid_swap_still_uses_plan_level_route(self):
+        self._run_refresh_for_level(1, "robin", "罗宾")
+        mid_swaps = self._mid_swap_to_logos()
+        self.assertEqual(len(mid_swaps), 1)
+        self.assertEqual(mid_swaps[0].plan_key, "char_0")
+
+    def test_specialty_full_mastery_assistant_flow(self):
+        """罗宾→逻各斯 / 逻各斯→罗宾→逻各斯 / 逻各斯→望(不中途换)."""
+        supports = self._specialty_route_supports()
+        skill_data = {
+            "characters": {
+                "char": {"name": "麒麟R夜刀", "profession": "SPECIAL"},
+                "logos": {"name": "逻各斯"},
+            }
+        }
+
+        def schedule(level, training=None):
+            scheduler = MagicMock()
+            scheduler.tasks = []
+            with (
+                patch(
+                    "arknights_mower.utils.mastery_sync.get_skill_data",
+                    return_value=skill_data,
+                ),
+                patch(
+                    "arknights_mower.utils.mastery_sync.get_route",
+                    return_value={"supports": "[]"},
+                ),
+                patch("arknights_mower.utils.mastery_sync.insert_plan"),
+                patch(
+                    "arknights_mower.utils.mastery_recommendation._supports_from_dicts",
+                    return_value=supports,
+                ),
+                patch(
+                    "arknights_mower.solvers.player_info.player_info_cache",
+                    {
+                        "latest": {
+                            "building_training": training or {},
+                        }
+                    },
+                ),
+            ):
+                MasterySync(scheduler)._schedule_next(
+                    {"char_id": "char", "skill_index": 0, "level": level}
+                )
+            return scheduler.tasks
+
+        # L1: no prior swap assistant → arrange 罗宾
+        l1_tasks = schedule(1)
+        self.assertEqual(l1_tasks[0].plan["train"], ["罗宾", "麒麟R夜刀"])
+
+        # L1 mid-training with 罗宾 → schedule 逻各斯
+        self._run_refresh_for_level(1, "robin", "罗宾")
+        self.assertEqual(len(self._mid_swap_to_logos()), 1)
+
+        # L2: keep 逻各斯 for start, then main assistant is 罗宾
+        l2_training = {
+            "trainee": {"charId": "char", "targetSkill": 0},
+            "trainer": {"charId": "logos"},
+            "remainSecs": 0,
+        }
+        l2_tasks = schedule(2, l2_training)
+        self.assertEqual(l2_tasks[0].plan["train"], ["Current", "麒麟R夜刀"])
+
+        # L2 mid-training after 罗宾 is in place → schedule 逻各斯 again
+        self._run_refresh_for_level(2, "robin", "罗宾")
+        self.assertEqual(len(self._mid_swap_to_logos()), 1)
+
+        # L3: keep 逻各斯 for start, main assistant becomes 望
+        l3_tasks = schedule(3, l2_training)
+        self.assertEqual(l3_tasks[0].plan["train"], ["Current", "麒麟R夜刀"])
+
+        # After L3 starts, even a stale 罗宾 snapshot must not mid-swap
+        self._run_refresh_for_level(3, "robin", "罗宾", hours=12)
+        self.assertEqual(self._mid_swap_to_logos(), [])
+
+        # L3 with 望 in room also must not mid-swap
+        self._run_refresh_for_level(3, "wang", "望", hours=12)
+        self.assertEqual(self._mid_swap_to_logos(), [])
+
     def test_refresh_skill_time_refreshes_snapshot_before_swap_calculation(self):
         finish = datetime.now() + timedelta(hours=5)
         support = MagicMock()
         support.name = "罗宾"
+        support.level = 1
         support.swap = True
         support.swap_name = "逻各斯"
         self.solver.op_data.skill_upgrade_supports = [support]
