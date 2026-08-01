@@ -23,8 +23,6 @@ const {
 
 import { folder_dialog } from '@/utils/dialog'
 
-const MUMU_MAC_STABLE = 'MuMuMacStable'
-
 async function select_maa_dir() {
   const folder_path = await folder_dialog()
   if (folder_path) {
@@ -140,12 +138,15 @@ async function test_maa() {
 const maa_conn_presets = ref([])
 
 async function get_maa_conn_presets() {
-  const response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/maa-conn-preset`)
-  maa_conn_presets.value = response.data.map((x) => {
-    const label = x === MUMU_MAC_STABLE ? `${x}（MuMu Mac 推荐）` : x
-    return { label, value: x }
-  })
+  try {
+    const response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/maa-conn-preset`)
+    maa_conn_presets.value = response.data.map((x) => ({ label: x, value: x }))
+  } catch (error) {
+    maa_msg.value = `读取连接配置失败：${error.message}`
+  }
 }
+
+onMounted(get_maa_conn_presets)
 
 const maa_touch_options = ['maatouch', 'minitouch', 'adb'].map((x) => {
   return { label: x, value: x }
@@ -219,8 +220,8 @@ async function run_maa_update(kind) {
       <n-form-item label="触控模式">
         <n-select v-model:value="maa_touch_option" :options="maa_touch_options" />
       </n-form-item>
-      <n-form-item label="启动前测试">
-        <n-checkbox v-model:checked="maa_startup_check">启动Mower前测试Maa连接</n-checkbox>
+      <n-form-item label="自动检测">
+        <n-checkbox v-model:checked="maa_startup_check">启动及每次调用Maa前自动测试连接</n-checkbox>
       </n-form-item>
       <n-form-item label="更新源">
         <n-select v-model:value="maa_update_source" :options="source_options" />

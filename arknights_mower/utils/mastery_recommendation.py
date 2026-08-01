@@ -295,20 +295,18 @@ def compute_workshop_config(
     from collections import defaultdict
 
     from arknights_mower.data import workshop_formula
+    from arknights_mower.utils.mastery_db import get_all_plans
 
-    # 优先用前端传入的 planned_skills；否则回退读文件（文件名历史拼写 matery）
+    # 优先用前端传入的 planned_skills；否则从 DB 读未完成计划
     if planned_skills is not None:
         planned_keys = list(planned_skills)
     else:
-        plan_path = get_path("@app/tmp/matery_plan.json")
-        planned_keys = []
-        if os.path.exists(plan_path):
-            try:
-                with open(plan_path, "r", encoding="utf-8") as f:
-                    plan = json.load(f)
-                planned_keys = [k for k, v in plan.items() if v]
-            except Exception:
-                pass
+        db_plans = get_all_plans()
+        planned_keys = [
+            f"{p['char_id']}_{p['skill_index']}"
+            for p in db_plans
+            if p.get("status") != "completed"
+        ]
 
     if planned_keys:
         try:
@@ -606,27 +604,18 @@ def auto_schedule_mastery_tasks():
     """仓库扫描后：检测计划内未满M3的技能，直接需求全部满足则返回待安排列表"""
     result = {"scheduled": [], "skipped": []}
 
-    plan_path = get_path("@app/tmp/matery_plan.json")
-    if not os.path.exists(plan_path):
-        return result
-    try:
-        with open(plan_path, "r", encoding="utf-8") as f:
-            plan = json.load(f)
-    except Exception:
-        return result
-    if not plan:
-        return result
+    from arknights_mower.utils.mastery_db import get_all_plans, get_pending_plans
+
+    db_plans = get_pending_plans()
+    if not db_plans:
+        all_plans = get_all_plans()
+        if not all_plans:
+            return result
+        db_plans = [p for p in all_plans if p.get("status") in ("pending", "failed")]
 
     plan_set = set()
-    for key in plan:
-        if not plan[key]:
-            continue
-        parts = key.rsplit("_", 1)
-        if len(parts) == 2:
-            try:
-                plan_set.add((parts[0], int(parts[1])))
-            except ValueError:
-                pass
+    for p in db_plans:
+        plan_set.add((p["char_id"], p["skill_index"]))
 
     if not plan_set:
         return result
