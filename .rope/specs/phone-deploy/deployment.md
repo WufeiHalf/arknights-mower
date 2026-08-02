@@ -85,8 +85,37 @@ These patches live on `phone/dev` long-term:
 2. MAA `asst` path priority: `sys.path.insert(0, maa_path/Python)` +
    purge stale `asst` modules (in both `base_schedule.initialize_maa`
    and `maa_check.py`) -- site-packages may have an old `asst` shim
-   that loads but `connect()` fails
+   that loads but `connect()` fails. See `asst-path-priority.md`.
 3. `/status` hardening when `op_data` not ready
+4. **MAA 软件/资源更新功能** (`utils/maa_update.py`, 5 commits on
+   `phone/dev`, upstream/dev has NO `maa_update.py`): conf fields
+   `maa_update_source/channel/mirrorchyan_cdk/proxy`, async version
+   check (`schedule_async_check` in `initialize_maa`), pending download
+   + apply on startup (`__main__.main`), `server.py` `maa_update_job`,
+   `MaaBasic.vue` update UI. Not yet PR'd upstream.
+
+### 合入上游 #901/#895 时的共存事实 (merge `1389754f6`)
+
+When upstream refactors the same files, keep BOTH sides - the patches
+are complementary, not conflicting. Resolved in `1389754f6`:
+
+- `__main__.py`: phone's `apply_pending_software` block + upstream's
+  `is_maa_connectivity_check_enabled` flow (drop the old
+  `startup_maa_check = should_check_maa_before_start()` line - the
+  function no longer exists after #901)
+- `conf.py`: phone `maa_update_*` fields + upstream docstring for
+  `maa_startup_check`
+- `base_schedule.py`: phone `schedule_async_check` + upstream
+  `check_maa_connectivity` / `rest_after_maa` methods
+- `server.py`: import `Lock, RLock, Thread` (phone Lock + upstream RLock);
+  keep both `maa_update_job` (phone) and `maa_check_lock` (upstream)
+- `mastery_recommendation.py`: `planned_skills` param first, else DB
+  `get_all_plans()` (upstream #895 removed the matery_plan.json file)
+- `mastery_sync.py`: upstream expired-`in_progress` recovery + phone
+  Skland-guard / `_auto_complete_level3`
+
+After merging, always: `unittest discover -p "*_tests.py"` + `ruff`
+before pushing phone/dev.
 
 ## Wrong vs Correct
 
