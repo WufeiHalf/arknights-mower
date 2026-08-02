@@ -1110,36 +1110,34 @@ function confirmSkill(op, rec) {
 
 async function doAddTask() {
   showConfirm.value = false
-  const { op, rec, supports } = cd
-  const p = profMap[op.profession] || '近卫'
-  const firstSupport = routeSettings[p]?.supports?.[0]?.name || ''
-  const skillNum = rec.skill_index + 1
+  const { op, rec } = cd
   try {
-    const r1 = await axios.post(`${import.meta.env.VITE_HTTP_URL}/task`, {
-      task: {
-        time: new Date(Date.now() + 60000).toISOString(),
-        plan: { train: [firstSupport, op.name] },
-        task_type: '上班',
-        meta_data: ''
-      }
-    })
-    if (r1.data !== '添加任务成功！') {
-      message.warning(r1.data)
+    // 计划写入 DB（pending），由 MasterySync 在下一次进入基建时自动调度
+    // （训练室排班 + SKILL_UPGRADE）。不要再用 POST /task 手动添加任务：
+    // skill_upgrade 会校验 DB 里的 in_progress 计划（_mastery_context），
+    // 手动任务因查不到计划会被跳过（invalid mastery plan_key）。
+    const body = {}
+    body[op.name] = rec.skill_index
+    const r = await axios.post(`${import.meta.env.VITE_HTTP_URL}/mastery-plan`, body)
+    const result = (r.data?.results || [])[0]
+    if (!result) {
+      message.error(r.data?.error || '添加计划失败')
       return
     }
-    const r2 = await axios.post(`${import.meta.env.VITE_HTTP_URL}/task`, {
-      task: {
-        time: new Date(Date.now() + 120000).toISOString(),
-        plan: {},
-        task_type: '技能专精',
-        meta_data: '' + skillNum,
-        plan_key: planKey(op.char_id, rec.skill_index)
-      },
-      upgrade_support: supports
-    })
-    r2.data === '添加任务成功！'
-      ? message.success(`${op.name} ${rec.skill_name} 专精任务已添加！`)
-      : message.warning(r2.data)
+    if (result.status === 'error') {
+      message.error(`添加失败: ${result.reason || '未知错误'}`)
+      return
+    }
+    if (result.status === 'already_completed') {
+      message.warning(`${op.name} ${rec.skill_name} 已专精完成，无需重复添加`)
+      return
+    }
+    plan.value[planKey(op.char_id, rec.skill_index)] = true
+    const hint =
+      result.status === 'already_planned'
+        ? `${op.name} ${rec.skill_name} 已在专精计划中，将由 Mower 自动调度`
+        : `${op.name} ${rec.skill_name} 已加入专精计划，将在下次基建排班时自动开始`
+    message.success(hint)
   } catch (e) {
     message.error(`添加失败: ${e.message}`)
   }

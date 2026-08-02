@@ -200,6 +200,28 @@ The ordinary training-room protection must not delete a task with
 `meta_data="_mastery"`. The `assistant_follows_schedule=true` behavior,
 where the assistant slot follows the ordinary schedule, remains unchanged.
 
+## Manual Task Contract (手动任务必须写 DB 计划)
+
+`skill_upgrade()` 在 `assistant_follows_schedule=false` 时强校验
+`_mastery_context(plan_key)`：DB `mastery_plan` 表必须有对应
+`(char_id, skill_index)` 的 **in_progress** 计划（`get_in_progress_plan`），
+否则 WARNING `invalid mastery plan_key` 并静默跳过。
+
+因此所有专精入口都必须**先 POST /mastery-plan 写入 DB（pending）**，
+再由 MasterySync 在下一次 `infra_main` 调度（排班 + SKILL_UPGRADE）。
+**禁止用 POST /task 手动添加 SKILL_UPGRADE 任务**——手动任务没有 DB
+计划，必然被 `_mastery_context` 拦下；且 mower 重启后手动任务会被
+`handle_error`（超 15 分钟清非专精任务）清掉，而 DB 计划重启后仍会
+被 MasterySync 重新调度。
+
+- 前端：`MasteryRecommendation.vue` `doAddTask()` 只调
+  POST /mastery-plan（`{干员名: skill_index}`），不再 POST /task。
+- 后端：`server.py` `add_task` 对带 plan_key 的 SKILL_UPGRADE 仍保留
+  （专精路线加载），但正常 UI 已不再走此路径。
+- 复现案例（2026-08-02）：WebUI 手动添加予愿安洁莉娜技能3 →
+  `skill_upgrade: invalid mastery plan_key=char_1015_aglna2_2`，
+  任务静默丢弃；DB 全表无 8 月新增记录。
+
 ## Inventory Data Is Not Real-Time
 
 `cultivate.json` (Skland API snapshot) and `inventory` table (DepotSolver
