@@ -75,8 +75,16 @@ proot-distro login ubuntu -- bash ...             # 3 (container reads Termux ho
    package time (`-C .../resource .`).
 4. MAA tar.gz structure varies (flat vs wrapped) - detect, don't assume.
 
-## WebUI / remote notes
+## WebUI / remote access (implemented 2026-08-02)
 
 - WebUI: `http://127.0.0.1:58000?token=mower` (adb forward from laptop).
-- Remote access over the internet (user's server 38.92.15.224) is planned
-  but **not implemented** - see session notes; SSH reverse tunnel chosen.
+- External access: **autossh reverse tunnel** (Termux `remote-tunnel.sh`):
+  phone -> `ssh -R 0.0.0.0:58000:127.0.0.1:58000 root@38.92.15.224` (binds
+  server 127.0.0.1; `GatewayPorts` NOT needed since Nginx proxies locally).
+  Reuses server Nginx `mower.kashm1r.org -> 127.0.0.1:58000` + Cloudflare
+  (HTTPS). Old server-side Docker mower (which used to own :58000) was
+  removed. Termux:Boot autostarts both mower and the tunnel.
+- Tunnel traps: Termux has no `/usr/bin/env` - use shebang
+  `#!/data/data/com.termux/files/usr/bin/bash`; `run-as` sets HOME to
+  `/data/user/0/com.termux` - scripts must set HOME/PATH explicitly
+  (pattern: `~/mower.sh`).
