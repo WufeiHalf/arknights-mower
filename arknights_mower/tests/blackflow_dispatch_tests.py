@@ -229,6 +229,93 @@ class TestToBlackflowNavigation(unittest.TestCase):
         mock_tap_terminal.assert_called_once_with("longterm")
         mock_tap.assert_not_called()
 
+    def test_tolerates_find_raising_filenotfound(self):
+        """验收 1+2+4：find 因模板缺失抛 FileNotFoundError → warning + 继续导航；命中模板仍正常 tap。"""
+        solver = self._make_solver()
+        scenes = iter([Scene.INDEX, Scene.INDEX, Scene.TERMINAL_MAIN])
+        blackflow_theme = ((300, 300), (400, 400))
+        start_explore = ((500, 500), (600, 600))
+        find_calls = []
+
+        def fake_find(name, *args, **kwargs):
+            find_calls.append(name)
+            if name == "bf/integrated_strategy":
+                # 生产路径：loadres → loadimg → np.fromfile 对缺失文件抛 FileNotFoundError
+                raise FileNotFoundError(f"resources/{name}.png 不存在")
+            if name == "bf/blackflow_theme":
+                return blackflow_theme
+            return start_explore
+
+        with (
+            patch.object(BaseSolver, "scene", side_effect=lambda: next(scenes)),
+            patch.object(BaseSolver, "find", side_effect=fake_find),
+            patch.object(BaseSolver, "sleep"),
+            patch.object(BaseSolver, "tap") as mock_tap,
+            patch.object(BaseSolver, "tap_index_element") as mock_tap_index,
+            patch.object(BaseSolver, "tap_terminal_button") as mock_tap_terminal,
+            patch.object(solver_module.logger, "warning") as mock_warning,
+        ):
+            solver.to_blackflow()
+
+        mock_tap_index.assert_called_once_with("terminal")
+        mock_tap_terminal.assert_called_once_with("longterm")
+        # 缺失模板被降级为“未命中”（warning + 继续），不中断导航
+        mock_tap.assert_called_once_with(blackflow_theme, interval=2)
+        self.assertEqual(
+            find_calls,
+            ["bf/integrated_strategy", "bf/blackflow_theme", "bf/start_explore"],
+        )
+        self.assertTrue(
+            any(
+                "bf/integrated_strategy" in str(call)
+                for call in mock_warning.call_args_list
+            ),
+            "模板缺失应 log warning",
+        )
+
+    def test_start_explore_template_missing_polls_until_timeout(self):
+        """验收 3：start_explore 模板缺失 → 按“未命中”持续轮询直到 2min 超时，而非立即抛错。"""
+        solver = self._make_solver()
+        start_time = datetime(2026, 5, 2, 15, 19, 33)
+
+        class FixedDateTime(datetime):
+            now_value = start_time
+
+            @classmethod
+            def now(cls, tz=None):
+                if tz is not None:
+                    return cls.now_value.replace(tzinfo=tz)
+                return cls.now_value
+
+        def advance_sleep(*args, **kwargs):
+            # 每次 sleep 累加 1.5min，使轮询能跨过 2min 超时阈值（固定值会让测试永不超时）
+            FixedDateTime.now_value += timedelta(minutes=1.5)
+
+        find_calls = []
+
+        def fake_find(name, *args, **kwargs):
+            find_calls.append(name)
+            if name == "bf/start_explore":
+                raise FileNotFoundError(f"resources/{name}.png 不存在")
+            return None
+
+        with (
+            patch.object(solver_module, "datetime", FixedDateTime),
+            patch.object(BaseSolver, "scene", return_value=Scene.TERMINAL_MAIN),
+            patch.object(BaseSolver, "find", side_effect=fake_find),
+            patch.object(BaseSolver, "sleep", side_effect=advance_sleep),
+            patch.object(BaseSolver, "tap"),
+            patch.object(BaseSolver, "tap_index_element"),
+            patch.object(BaseSolver, "tap_terminal_button"),
+        ):
+            with self.assertRaisesRegex(
+                Exception, "导航超时（未进入黑流树海开始探索界面）"
+            ):
+                solver.to_blackflow()
+
+        # 缺失模板按“未命中”继续轮询直到 2min 超时，而不是第一次 find 就抛错中断
+        self.assertGreater(find_calls.count("bf/start_explore"), 1)
+
     def test_terminal_timeout_raises(self):
         """验收 4：未到达终端超过 30s → 抛异常。"""
         solver = self._make_solver()

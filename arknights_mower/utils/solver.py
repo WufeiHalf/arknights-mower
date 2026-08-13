@@ -881,8 +881,22 @@ class BaseSolver:
         # 长期探索 → 集成战略入口 → 黑流树海主题（模板占位，Slice 3 补素材）
         self.tap_terminal_button("longterm")
         self.sleep(3)
+        warned: set[str] = set()
+
+        def find_template(name: str) -> tp.Scope:
+            # 模板缺失（Slice 3 前 resources/bf/ 不存在）时按“未命中”处理，不中断导航
+            try:
+                return self.find(name)
+            except OSError:
+                if name not in warned:
+                    warned.add(name)
+                    logger.warning(
+                        f"黑流树海刷钱导航：模板 {name} 缺失（模板占位，Slice 3 补素材）"
+                    )
+                return None
+
         for name in ("bf/integrated_strategy", "bf/blackflow_theme"):
-            pos = self.find(name)
+            pos = find_template(name)
             if pos:
                 logger.debug(f"黑流树海刷钱导航：匹配到 {name}")
                 self.tap(pos, interval=2)
@@ -892,7 +906,7 @@ class BaseSolver:
                 )
 
         # 停在“开始探索”界面
-        while not self.find("bf/start_explore"):
+        while not find_template("bf/start_explore"):
             if datetime.now() - start_time > timedelta(minutes=2):
                 raise Exception("导航超时（未进入黑流树海开始探索界面）")
             self.sleep()
