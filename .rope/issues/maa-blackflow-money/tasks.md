@@ -16,8 +16,11 @@
 
 ## Slice 1: conf.BF 属性 + 启动预检
 
-- Status: pending
+- Status: done
 - Kind: vertical
+- Verification result: `venv/bin/python -m unittest discover -s arknights_mower/tests -p "*_tests.py"` → Ran 131 tests OK; ruff check/format OK
+- Review verdict: PASS（reviewer 提出 alpha/beta 版本后缀误报问题 → 已修复 c2e1316d7）
+- Review notes: `parse_maa_version` 原只接受 3 段，alpha/beta 通道（"v6.16.9-alpha.1.d013..."）误抛 ValueError；修复后取前 3 段数字、不足 3 段仍报错
 - Goal: 用户配置 `maa_long_task_type: "bf"` 后 mower 能识别该类型，并在启动刷钱前验证 MAA 能力（版本 + 任务链存在性），不满足时给出明确报错
 - Blocked by: none
 - Scope: `arknights_mower/utils/config/conf.py`（LongTaskPart 加 `BF` 属性）、新预检函数（`utils/maa_check.py` 或 `solvers/base_schedule.py` 内，可单测的纯函数）、`arknights_mower/tests/`（新 `blackflow_precheck_tests.py`）
@@ -36,8 +39,11 @@
 
 ## Slice 2: maa_plan_solver 分派 + to_blackflow 导航
 
-- Status: pending
+- Status: done
 - Kind: vertical
+- Verification result: `venv/bin/python -m unittest discover -s arknights_mower/tests -p "*_tests.py"` → Ran 140 tests OK; ruff check/format OK; `npm run build` OK
+- Review verdict: PASS（reviewer 提出高严重度问题：resources/bf/ 不存在时 find 抛 FileNotFoundError 而非返回 None，占位行为真机不可达 → 已修复 078f64b1f，新增模板缺失容错测试）
+- Review notes: `find_template` 包装捕获 OSError→warning+继续；start_explore 缺失时轮询到 2min 超时（超时 raise 不被吞）
 - Goal: 时间窗内 `conf.BF` 时 mower 自动导航到黑流树海"开始探索"界面并启动 MAA 刷钱任务链，循环/停止与现有大型任务一致
 - Blocked by: Slice 1
 - Scope: `arknights_mower/solvers/base_schedule.py`（`maa_plan_solver` 大型任务循环加 `conf.BF` 条件 + `elif conf.BF:` 分支）、`arknights_mower/utils/solver.py`（新增 `to_blackflow`，参照 `to_reclamation` L740）、`ui/src/components/LongTasks.vue`（类型下拉加 `bf` 选项）、`arknights_mower/tests/base_scheduler_tests.py`（分派测试）
