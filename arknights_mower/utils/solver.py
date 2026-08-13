@@ -865,6 +865,41 @@ class BaseSolver:
                     logger.warning(f"RelaunchAnchor 导航第{attempt + 1}次失败，重试")
             raise Exception("无法找到指定的 RelaunchAnchor 模式")
 
+    def to_blackflow(self):
+        """导航到黑流树海，直到停在“开始探索”界面，MAA 可接管"""
+        logger.info("黑流树海刷钱导航")
+        start_time = datetime.now()
+
+        # 前往终端
+        while self.scene() != Scene.TERMINAL_MAIN:
+            if self.scene() == Scene.INDEX:
+                self.tap_index_element("terminal")
+            if datetime.now() - start_time > timedelta(seconds=30):
+                raise Exception("导航超时（未到达终端）")
+            self.sleep()
+
+        # 长期探索 → 集成战略入口 → 黑流树海主题（模板占位，Slice 3 补素材）
+        self.tap_terminal_button("longterm")
+        self.sleep(3)
+        for name in ("bf/integrated_strategy", "bf/blackflow_theme"):
+            pos = self.find(name)
+            if pos:
+                logger.debug(f"黑流树海刷钱导航：匹配到 {name}")
+                self.tap(pos, interval=2)
+            else:
+                logger.warning(
+                    f"黑流树海刷钱导航：未匹配到 {name}（模板占位，Slice 3 补素材）"
+                )
+
+        # 停在“开始探索”界面
+        while not self.find("bf/start_explore"):
+            if datetime.now() - start_time > timedelta(minutes=2):
+                raise Exception("导航超时（未进入黑流树海开始探索界面）")
+            self.sleep()
+        logger.info(
+            f"黑流树海刷钱导航成功，用时{(datetime.now() - start_time).total_seconds():.0f}秒"
+        )
+
     def waiting_solver(self):
         """需要等待的页面解决方法。触发超时重启会返回False"""
         scene = self.scene()

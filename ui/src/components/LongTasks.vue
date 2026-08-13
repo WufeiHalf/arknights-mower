@@ -18,6 +18,7 @@ const maa_long_task_options = [
   { label: '集成战略 (Maa)', value: 'rogue' },
   { label: '保全派驻 (Maa)', value: 'sss' },
   { label: '生息演算 (Maa)', value: 'rcl' },
+  { label: '黑流树海刷钱 (Maa)', value: 'bf' },
   { label: '生息演算', value: 'ra' },
   { label: '隐秘战线', value: 'sf' }
 ]
