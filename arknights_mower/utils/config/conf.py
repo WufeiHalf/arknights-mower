@@ -513,6 +513,10 @@ class Conf(
         return self.maa_rg_enable == 1 and self.maa_long_task_type == "rcl"
 
     @property
+    def BF(self):
+        return self.maa_rg_enable == 1 and self.maa_long_task_type == "bf"
+
+    @property
     def run_order_buffer_time(self):
         """
         >  0 葛朗台跑单的缓冲时间
