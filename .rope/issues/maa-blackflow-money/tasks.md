@@ -64,8 +64,10 @@
 
 ## Slice 3: 导航模板入库 + 手机端验证
 
-- Status: blocked-by-user（等用户提供游戏截图；手机在家）
+- Status: in-progress（本地部分完成，E2 上机验证待用户回家）
 - Kind: vertical
+- Local verification: 3 模板（integrated_strategy/blackflow_theme/start_explore）按 1920×1080 运行时坐标系从 2640×1216 截图缩放裁剪入库；真实 find 链路 3 HIT + 6 误匹配 MISS；端到端导航模拟点击序列正确（提交 56d166270）
+- Remaining: E1 手机端 MAA 能力验证（user-run）+ E2 上机全链路（user-run）
 - Goal: 用用户提供的主力手机游戏截图制作导航模板（集成战略入口/黑流树海主题/开始探索界面），替换占位，并上机验证全链路
 - Blocked by: Slice 2
 - Scope: `arknights_mower/resources/`（新增 `bf/` 模板 png）、`arknights_mower/utils/recognize.py`（若需场景识别接线）、手机端部署验证（phone/dev）
