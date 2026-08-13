@@ -138,11 +138,16 @@ def is_maa_connectivity_check_enabled() -> bool:
 
 
 def parse_maa_version(version_str: str) -> tuple[int, int, int]:
-    """解析 "v6.14.2" 风格 MAA 版本号为 (6, 14, 2)，非法输入抛 ValueError。"""
+    """解析 "v6.14.2" 风格 MAA 版本号为 (6, 14, 2)。
+
+    alpha/beta 通道版本号形如 "v6.16.9-alpha.1.d013.g66018a451f"（`-` 后缀
+    附着在第 3 段），取前 3 段数字，其余构建信息忽略；不足 3 段或前 3 段
+    含非数字段抛 ValueError。
+    """
     text = version_str.strip()
     if text.startswith("v"):
         text = text[1:]
-    parts = text.split(".")
+    parts = text.replace("-", ".").split(".")[:3]
     if len(parts) != 3:
         raise ValueError(f"无法解析 MAA 版本号：{version_str!r}")
     try:

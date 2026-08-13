@@ -46,8 +46,20 @@ class TestParseMaaVersion(unittest.TestCase):
     def test_parses_plain_version(self):
         self.assertEqual(parse_maa_version("6.14.2"), (6, 14, 2))
 
+    def test_parses_alpha_version_with_build_suffix(self):
+        self.assertEqual(
+            parse_maa_version("v6.16.9-alpha.1.d013.g66018a451f"), (6, 16, 9)
+        )
+
+    def test_parses_beta_version(self):
+        self.assertEqual(parse_maa_version("v6.13.0-beta.2"), (6, 13, 0))
+
+    def test_parses_version_with_extra_numeric_segments(self):
+        # alpha/beta 格式第 4 段起为构建信息，多余数字段应被忽略
+        self.assertEqual(parse_maa_version("v6.14.2.1"), (6, 14, 2))
+
     def test_invalid_version_raises(self):
-        for bad in ["", "v6", "6.14", "v6.14.2.1", "abc", "6.14.x"]:
+        for bad in ["", "v6", "6.14", "abc", "6.14.x"]:
             with self.assertRaises(ValueError):
                 parse_maa_version(bad)
 
