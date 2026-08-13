@@ -64,7 +64,7 @@
 
 ## Slice 3: 导航模板入库 + 手机端验证
 
-- Status: pending
+- Status: blocked-by-user（等用户提供游戏截图；手机在家）
 - Kind: vertical
 - Goal: 用用户提供的主力手机游戏截图制作导航模板（集成战略入口/黑流树海主题/开始探索界面），替换占位，并上机验证全链路
 - Blocked by: Slice 2
