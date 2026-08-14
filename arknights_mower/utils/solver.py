@@ -878,13 +878,13 @@ class BaseSolver:
                 raise Exception("导航超时（未到达终端）")
             self.sleep()
 
-        # 长期探索 → 集成战略入口 → 黑流树海主题（每步轮询至命中，总超时 2 分钟）
+        # 长期探索 → 集成战略入口（点击后直达当前活动主题主页，即黑流树海）
         self.tap_terminal_button("longterm")
         self.sleep(3)
         warned: set[str] = set()
 
         def find_template(name: str) -> tp.Scope:
-            # 模板缺失（resources/bf/ 尚未入库）时按“未命中”处理，不中断导航
+            # 模板缺失（resources/bf/ 未部署）时按“未命中”处理，不中断导航
             try:
                 return self.find(name)
             except OSError:
@@ -895,21 +895,41 @@ class BaseSolver:
                     )
                 return None
 
-        for name in ("bf/integrated_strategy", "bf/blackflow_theme"):
+        def wait_template(name: str, deadline: datetime) -> tp.Scope:
+            """轮询至模板命中，超过 deadline 返回 None（不抛错，供可选步骤使用）。"""
             pos = find_template(name)
             while not pos:
-                if datetime.now() - start_time > timedelta(minutes=2):
-                    raise Exception(f"导航超时（未找到 {name}）")
+                if datetime.now() > deadline:
+                    return None
                 self.sleep()
                 pos = find_template(name)
-            logger.debug(f"黑流树海刷钱导航：匹配到 {name}")
-            self.tap(pos, interval=2)
+            return pos
 
-        # 停在“开始探索”界面
-        while not find_template("bf/start_explore"):
+        # 点击集成战略入口（实测点击后直达当前活动主题主页）
+        pos = find_template("bf/integrated_strategy")
+        while not pos:
             if datetime.now() - start_time > timedelta(minutes=2):
-                raise Exception("导航超时（未进入黑流树海开始探索界面）")
+                raise Exception("导航超时（未找到 bf/integrated_strategy）")
             self.sleep()
+            pos = find_template("bf/integrated_strategy")
+        logger.debug("黑流树海刷钱导航：匹配到 bf/integrated_strategy")
+        self.tap(pos, interval=2)
+
+        # 先在主题主页找“开始探索”（直达路径）；若短超时未命中，可能是进了主题选择页，
+        # 补一步点黑流树海主题（可选容错路径，模板缺失时按未命中继续）
+        deadline = start_time + timedelta(seconds=15)
+        pos = wait_template("bf/start_explore", deadline)
+        if pos is None:
+            logger.debug("黑流树海刷钱导航：未直达主题主页，尝试主题选择页")
+            deadline = start_time + timedelta(minutes=2)
+            bf_pos = wait_template("bf/blackflow_theme", deadline)
+            if bf_pos is not None:
+                logger.debug("黑流树海刷钱导航：匹配到 bf/blackflow_theme")
+                self.tap(bf_pos, interval=2)
+            pos = wait_template("bf/start_explore", deadline)
+            if pos is None:
+                raise Exception("导航超时（未进入黑流树海开始探索界面）")
+
         logger.info(
             f"黑流树海刷钱导航成功，用时{(datetime.now() - start_time).total_seconds():.0f}秒"
         )

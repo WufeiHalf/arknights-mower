@@ -172,13 +172,12 @@ class TestToBlackflowNavigation(unittest.TestCase):
         return solver
 
     def test_navigates_to_start_explore(self):
-        """验收 4：INDEX→终端→长期探索→集成战略→黑流树海主题→开始探索界面。"""
+        """验收 4：INDEX→终端→长期探索→集成战略→（直达）开始探索界面。"""
         solver = self._make_solver()
         scenes = iter([Scene.INDEX, Scene.INDEX, Scene.TERMINAL_MAIN])
         integrated_strategy = ((100, 100), (200, 200))
-        blackflow_theme = ((300, 300), (400, 400))
         start_explore = ((500, 500), (600, 600))
-        finds = iter([integrated_strategy, blackflow_theme, start_explore])
+        finds = iter([integrated_strategy, start_explore])
         find_calls = []
 
         def fake_find(name, *args, **kwargs):
@@ -197,16 +196,62 @@ class TestToBlackflowNavigation(unittest.TestCase):
 
         mock_tap_index.assert_called_once_with("terminal")
         mock_tap_terminal.assert_called_once_with("longterm")
+        mock_tap.assert_has_calls([call(integrated_strategy, interval=2)])
+        self.assertEqual(
+            find_calls,
+            ["bf/integrated_strategy", "bf/start_explore"],
+        )
+
+    def test_falls_back_to_theme_select_page(self):
+        """验收 4：点集成战略后未直达主题主页（start_explore 短超时）→ 走主题选择页点黑流树海。"""
+        solver = self._make_solver()
+        start_time = datetime(2026, 5, 2, 15, 19, 33)
+
+        class FixedDateTime(datetime):
+            now_value = start_time
+
+            @classmethod
+            def now(cls, tz=None):
+                if tz is not None:
+                    return cls.now_value.replace(tzinfo=tz)
+                return cls.now_value
+
+        def advance_sleep(*args, **kwargs):
+            FixedDateTime.now_value += timedelta(
+                seconds=20
+            )  # 单次 sleep 跨过 15s 短超时
+
+        integrated_strategy = ((100, 100), (200, 200))
+        blackflow_theme = ((300, 300), (400, 400))
+        start_explore = ((500, 500), (600, 600))
+        find_calls = []
+
+        def fake_find_after_theme(name, *args, **kwargs):
+            find_calls.append(name)
+            if name == "bf/integrated_strategy":
+                return integrated_strategy
+            if name == "bf/blackflow_theme":
+                return blackflow_theme
+            return start_explore if find_calls.count(name) > 1 else None
+
+        with (
+            patch.object(solver_module, "datetime", FixedDateTime),
+            patch.object(BaseSolver, "scene", return_value=Scene.TERMINAL_MAIN),
+            patch.object(BaseSolver, "find", side_effect=fake_find_after_theme),
+            patch.object(BaseSolver, "sleep", side_effect=advance_sleep),
+            patch.object(BaseSolver, "tap") as mock_tap,
+            patch.object(BaseSolver, "tap_index_element"),
+            patch.object(BaseSolver, "tap_terminal_button"),
+        ):
+            solver.to_blackflow()
+
         mock_tap.assert_has_calls(
             [
                 call(integrated_strategy, interval=2),
                 call(blackflow_theme, interval=2),
             ]
         )
-        self.assertEqual(
-            find_calls,
-            ["bf/integrated_strategy", "bf/blackflow_theme", "bf/start_explore"],
-        )
+        self.assertIn("bf/blackflow_theme", find_calls)
 
     def test_tolerates_missing_placeholder_templates(self):
         """验收 4：模板未命中（页面未就绪）时轮询等待，超时抛导航错误而非静默跳过。"""
@@ -251,7 +296,6 @@ class TestToBlackflowNavigation(unittest.TestCase):
         solver = self._make_solver()
         scenes = iter([Scene.INDEX, Scene.INDEX, Scene.TERMINAL_MAIN])
         integrated_strategy = ((100, 100), (200, 200))
-        blackflow_theme = ((300, 300), (400, 400))
         start_explore = ((500, 500), (600, 600))
         find_calls = []
 
@@ -263,8 +307,6 @@ class TestToBlackflowNavigation(unittest.TestCase):
                 if find_calls.count(name) < 3:
                     raise FileNotFoundError(f"resources/{name}.png 不存在")
                 return integrated_strategy
-            if name == "bf/blackflow_theme":
-                return blackflow_theme
             return start_explore
 
         with (
@@ -281,12 +323,7 @@ class TestToBlackflowNavigation(unittest.TestCase):
         mock_tap_index.assert_called_once_with("terminal")
         mock_tap_terminal.assert_called_once_with("longterm")
         # 缺失模板被降级为“未命中”（warning + 继续轮询），不中断导航，资源就位后正常点击
-        mock_tap.assert_has_calls(
-            [
-                call(integrated_strategy, interval=2),
-                call(blackflow_theme, interval=2),
-            ]
-        )
+        mock_tap.assert_has_calls([call(integrated_strategy, interval=2)])
         self.assertTrue(
             any(
                 "bf/integrated_strategy" in str(c) for c in mock_warning.call_args_list
