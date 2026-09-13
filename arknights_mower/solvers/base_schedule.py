@@ -1504,194 +1504,8 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             save_exception(e)
             logger.exception(e)
 
-    def _mastery_context(self, plan_key):
-        if not plan_key or "_" not in plan_key:
-            return None
-        char_id, skill_index = plan_key.rsplit("_", 1)
-        if not skill_index.isdigit():
-            return None
-        from arknights_mower.utils.mastery_db import get_in_progress_plan
-        from arknights_mower.utils.mastery_recommendation import get_skill_data
-
-        plan = get_in_progress_plan(include_expired=True)
-        if not plan or plan.get("char_id") != char_id:
-            return None
-        try:
-            if int(plan.get("skill_index")) != int(skill_index):
-                return None
-        except (TypeError, ValueError):
-            return None
-        char_info = get_skill_data().get("characters", {}).get(char_id, {})
-        name = char_info.get("name")
-        if not name:
-            return None
-        return plan, char_info, name, int(skill_index)
-
-    def _mastery_target_name(self, plan_key):
-        if not plan_key:
-            return None
-        try:
-            char_id, _ = plan_key.rsplit("_", 1)
-            from arknights_mower.utils.mastery_recommendation import get_skill_data
-
-            return get_skill_data().get("characters", {}).get(char_id, {}).get("name")
-        except (ValueError, TypeError, AttributeError):
-            return None
-
-    def _mastery_target_in_training_room(self, plan_key):
-        target_name = self._mastery_target_name(plan_key)
-        if not target_name:
-            logger.warning(
-                f"skill_upgrade: cannot resolve mastery target plan_key={plan_key}"
-            )
-            return False
-        try:
-            current = self.get_agent_from_room("train")
-        except Exception as exc:
-            logger.warning(
-                f"skill_upgrade: training slot read failed, retrying mastery: {exc}"
-            )
-            return False
-        if not isinstance(current, (list, tuple)):
-            logger.warning(
-                f"skill_upgrade: invalid training slot read, value={current!r}"
-            )
-            return False
-        target = current[1] if len(current) > 1 else None
-        actual_name = target.get("agent") if isinstance(target, dict) else target
-        if actual_name == target_name:
-            return True
-        logger.warning(
-            f"skill_upgrade: mastery target not in training slot, "
-            f"target={target_name}, actual={actual_name}"
-        )
-        return False
-
-    def _retry_mastery_arrangement(self, plan_key, skill, support):
-        retry_time = datetime.now() + timedelta(seconds=5)
-        target_name = self._mastery_target_name(plan_key)
-        if not target_name or support is None:
-            logger.warning(
-                f"skill_upgrade: cannot rebuild mastery retry plan_key={plan_key}"
-            )
-            return
-        self.tasks = [
-            task
-            for task in self.tasks
-            if not (
-                getattr(task, "plan_key", "") == plan_key
-                and task.meta_data == "_mastery"
-            )
-        ]
-        retry = SchedulerTask(
-            time=retry_time,
-            task_plan={"train": [support.name, target_name]},
-            meta_data="_mastery",
-            adjusted=True,
-        )
-        retry.plan_key = plan_key
-        self.tasks.append(retry)
-        self.tasks = [
-            task
-            for task in self.tasks
-            if not (
-                task.type == TaskTypes.SKILL_UPGRADE
-                and getattr(task, "plan_key", "") == plan_key
-            )
-        ]
-        upgrade_retry = SchedulerTask(
-            time=retry_time + timedelta(seconds=1),
-            task_type=TaskTypes.SKILL_UPGRADE,
-            meta_data=skill,
-            adjusted=True,
-        )
-        upgrade_retry.plan_key = plan_key
-        self.tasks.append(upgrade_retry)
-        logger.info(
-            f"skill_upgrade: mastery arrangement not applied, retry at {retry_time} "
-            f"plan_key={plan_key}"
-        )
-
-    def _mastery_support_for_plan(self, plan_key):
-        context = self._mastery_context(plan_key)
-        if context is None:
-            return None
-        plan, char_info, _, _ = context
-        if not self.op_data.skill_upgrade_supports:
-            from arknights_mower.utils.mastery_db import get_route
-            from arknights_mower.utils.mastery_recommendation import (
-                PROF_MAP,
-                _supports_from_dicts,
-            )
-
-            profession = PROF_MAP.get(
-                char_info.get("profession", ""), char_info.get("profession", "")
-            )
-            route = get_route(profession)
-            if route:
-                try:
-                    supports = json.loads(route["supports"])
-                    self.op_data.skill_upgrade_supports = _supports_from_dicts(
-                        supports.get("supports", supports)
-                        if isinstance(supports, dict)
-                        else supports
-                    )
-                except (TypeError, ValueError, KeyError):
-                    logger.warning(
-                        f"skill_upgrade: invalid mastery route plan_key={plan_key}"
-                    )
-        return next(
-            (
-                support
-                for support in self.op_data.skill_upgrade_supports
-                if support.level == plan.get("level", 1)
-            ),
-            None,
-        )
-
-    def _requeue_mastery_upgrade(self, plan_key, skill):
-        retry = SchedulerTask(
-            time=datetime.now() + timedelta(seconds=5),
-            task_type=TaskTypes.SKILL_UPGRADE,
-            meta_data=skill,
-            adjusted=True,
-        )
-        retry.plan_key = plan_key
-        self.tasks = [
-            task
-            for task in self.tasks
-            if not (
-                task.type == TaskTypes.SKILL_UPGRADE
-                and getattr(task, "plan_key", "") == plan_key
-            )
-        ]
-        self.tasks.append(retry)
-        logger.warning(
-            f"skill_upgrade: mastery support unavailable, retry at {retry.time} "
-            f"plan_key={plan_key}"
-        )
-
     def skill_upgrade(self, skill):
         try:
-            plan_key = getattr(self.task, "plan_key", "")
-            mastery_support = None
-            mastery_plan = None
-            if not config.conf.assistant_follows_schedule:
-                mastery_context = self._mastery_context(plan_key)
-                if not plan_key or mastery_context is None:
-                    logger.warning(
-                        f"skill_upgrade: invalid mastery plan_key={plan_key}, "
-                        "skip skill selection"
-                    )
-                    return
-                mastery_plan = mastery_context[0]
-                mastery_support = self._mastery_support_for_plan(plan_key)
-                if mastery_support is None:
-                    self._requeue_mastery_upgrade(plan_key, skill)
-                    return
-                if not self._mastery_target_in_training_room(plan_key):
-                    self._retry_mastery_arrangement(plan_key, skill, mastery_support)
-                    return
             if "|" in skill:
                 skill = skill.split("|")[0]
             elif not skill.isdigit():
@@ -1820,18 +1634,13 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                             ((94, 998), (223, 1048)),
                             use_digit_reader=True,
                         )
-                        if mastery_plan is not None:
-                            level = mastery_plan.get("level", 1)
+                        hours = (finish_time - datetime.now()).total_seconds() / 3600
+                        if hours > 23:
+                            level = 3
+                        elif hours > 15:
+                            level = 2
                         else:
-                            hours = (
-                                finish_time - datetime.now()
-                            ).total_seconds() / 3600
-                            if hours > 23:
-                                level = 3
-                            elif hours > 15:
-                                level = 2
-                            else:
-                                level = 1
+                            level = 1
                         logger.info(f"本次专精将提升{skill}技能至{level}")
                         self.tap((self.recog.w * 0.87, self.recog.h * 0.9))
                         del tasks[0]
@@ -1841,22 +1650,19 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                         self.back()
                 elif scene == Scene.TRAIN_SKILL_UPGRADE_ERROR:
                     if tasks[0] == "confirm":
-                        if mastery_plan is not None:
-                            level = mastery_plan.get("level", 1)
-                        else:
-                            level = 1
-                            finish_time = self.double_read_time(
-                                ((94, 998), (223, 1048)),
-                                use_digit_reader=True,
-                            )
-                            if finish_time:
-                                hours = (
-                                    finish_time - datetime.now()
-                                ).total_seconds() / 3600
-                                if hours > 23:
-                                    level = 3
-                                elif hours > 15:
-                                    level = 2
+                        level = 1
+                        finish_time = self.double_read_time(
+                            ((94, 998), (223, 1048)),
+                            use_digit_reader=True,
+                        )
+                        if finish_time:
+                            hours = (
+                                finish_time - datetime.now()
+                            ).total_seconds() / 3600
+                            if hours > 23:
+                                level = 3
+                            elif hours > 15:
+                                level = 2
                         msg = f"专精{skill}技能 level {level} 材料不足，已标记失败"
                         logger.warning(msg)
                         send_message(msg, level="ERROR")
