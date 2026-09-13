@@ -247,6 +247,36 @@ MasterySync runs in `infra_main`'s `elif not self.todo_task:` branch
 If workshop tasks are densely packed (every 10 min), MasterySync may
 fire between them.
 
+**Dual entry (since upstream #906 merge, 2026-09)**: `plan_solver` also
+has a fallback entry -- when no in_progress plan exists, pending plans
+exist, and queue has no SKILL_UPGRADE, it calls
+`MasterySync(self)._schedule_next(pending[0])` directly. This bypasses
+the Skland-not-ok guard in `sync_and_schedule`; acceptable because the
+queue-level SKILL_UPGRADE dedup still applies. Phone/dev keeps both
+entries (user decision).
+
+## Upstream Merge Decisions (2026-09, #902/#906)
+
+Adopted from upstream:
+- REFRESH_TIME dedup: before enqueueing a `train` REFRESH_TIME, check
+  `find_next_task(REFRESH_TIME, meta_data="train")` first (two sites).
+- Deferred in_progress marking: `_schedule_next` no longer marks the
+  plan `in_progress` when scheduling; only `skill_upgrade`'s confirm
+  stage (after the training countdown is actually read) sets
+  `in_progress` + `expires_at`. Prevents false in_progress from causing
+  repeated REFRESH_TIME insertion.
+
+Deliberately NOT adopted (kept local):
+- `level < 3` swap guard. Upstream disables assistant swap entirely for
+  level-3 (start-time arrangement + mid-swap). Phone/dev keeps optimal
+  config: start lv3 with previous level's swap assistant kept in place
+  (`arrangement_support = "Current"`), swap to the lv3 route assistant
+  after training countdown confirmed, mid-swap checks still active.
+  Rationale: user expects e.g. Logos starts lv3, then swaps to Wang.
+  Cost: a corrupted DB state could theoretically enqueue a swap that
+  interrupts a running lv3 training (guarded by SKILL_UPGRADE queue
+  dedup + Skland-not-ok guard).
+
 ## Tests Required
 
 - Mastery scheduling regression: false 模式下 `_mastery` 不被普通训练室保护逻辑跳过；目标训练位为空或错位时不点击专精，按 `plan_key` 去重并以 `now + 5 秒` 重试；true 模式保持兼容。
