@@ -82,16 +82,23 @@ _Avoid_: "dev/my-phone" (ref namespace conflict with existing `dev` branch).
 The scheduler component (`utils/mastery_sync.py`) that runs in `infra_main`'s
 `todo_task` stage. Refreshes Skland data, syncs `cultivate.json` to DB, and
 schedules pending mastery plans by enqueuing a shift-on task + SKILL_UPGRADE
-task. Not the same as `plan_solver` (which must NOT add bare SKILL_UPGRADE).
-_Avoid_: "专精调度" when meaning `plan_solver` (the old buggy path).
+task. Secondary entry (upstream #906, kept by user decision 2026-09):
+`plan_solver` may call `MasterySync(self)._schedule_next(pending[0])` when
+no in_progress plan exists -- this bypasses the Skland guard, queue-level
+SKILL_UPGRADE dedup still applies. Bare SKILL_UPGRADE insertion (not via
+MasterySync) remains forbidden.
+_Avoid_: "专精调度" when meaning `plan_solver` adding tasks directly.
 
 **mastery_plan state machine**:
 DB states for a `(char_id, skill_index)` pair: `pending` -> `in_progress`
 (with `expires_at`) -> `completed` | `failed`. Each state change inserts a new
-row (append-only). `pending` = awaiting scheduling. `in_progress` = training
-scheduled or running. `expires_at` is NULL until `skill_upgrade` confirm sets
-it. See `.rope/specs/mastery/application-flow.md`.
-_Avoid_: reusing a row's status field (always insert new).
+row (append-only). `pending` = awaiting scheduling AND stays pending while
+queued (deferred marking, upstream #902). `in_progress` = training countdown
+confirmed by `skill_upgrade` confirm (training actually started); `expires_at`
+is set in the same write, in **local time** (ADR 0002). See
+`.rope/specs/mastery/application-flow.md`.
+_Avoid_: reusing a row's status field (always insert new); assuming
+`_schedule_next` marks in_progress.
 
 **cultivate.json**:
 Skland API snapshot at `tmp/cultivate.json` containing player inventory

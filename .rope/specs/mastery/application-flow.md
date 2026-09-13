@@ -35,7 +35,8 @@ infra_main -> todo_task stage -> MasterySync.sync_and_schedule()
   │   └─ trainee=None -> mark failed (断点C, see below)
   ├─ _auto_complete_level3 (cultivate.json already-done levels)
   └─ pending exists -> _schedule_next:
-      ├─ DB: pending -> in_progress (expires_at=NULL)
+      ├─ DB: no status change here (deferred marking, upstream #902);
+      │     plan stays pending until skill_upgrade confirm
       ├─ Select support by target plan level, not route-list position
       ├─ If the previous level's swap assistant is still present, enqueue
       │  {train: [Current, trainee]} so its next-training effect is consumed
@@ -46,17 +47,19 @@ infra_main consumes queue:
   ├─ 上班任务 -> agent_arrange -> support+trainee enter train room
   └─ SKILL_UPGRADE -> skill_upgrade("name 技能N"):
       tasks = ["collect", "upgrade", "confirm"]
-      自动计划的目标等级来自 mastery_plan.level，不从倒计时反推
+      (无入口校验，直接执行；训练位干员由排班任务保证)
       ├─ collect: 收取上次训练结果 (training_idle -> skip, training_completed -> tap)
       ├─ upgrade: 进技能选择 -> 选技能 -> 确认
+      │   (TRAIN_SKILL_UPGRADE 界面按 OCR 剩余时长推断 level:
+      │    >23h→3, >15h→2, else 1；不读 DB plan level)
       └─ confirm: 读倒计时 -> set_plan_status(in_progress, expires_at)
-                    ↑ 训练真正开始
-                    └─ 成功后才按当前等级创建协助位换人任务
+                    ↑ 训练真正开始，pending 在此刻才变 in_progress
 
 refresh_skill_time (REFRESH_TIME task):
   ├─ 训练完成 -> _handle_training_complete -> completed (+pending next level)
   │                不直接创建 SKILL_UPGRADE；由下一次 MasterySync 统一调度
   └─ 未完成 -> 更新expires_at + _calculate_swap_from_api
+                (协助位换人在这里，不在 skill_upgrade confirm 后)
 ```
 
 ## Mid-swap Contract (减半换人)
@@ -79,7 +82,7 @@ incorrectly demotes L3 assistants like 望 to 逻各斯.
 ## DB State Machine
 
 ```
-pending ──_schedule_next──> in_progress(expires_at=NULL)
+pending ──_schedule_next──> (still pending; queue-level only)
                                │
                           skill_upgrade confirm
                                │
@@ -133,6 +136,12 @@ if self.find("training_idle"):
 
 ### 断点C: in_progress 被 MasterySync 误杀 (FIXED)
 
+**Historical note**: the premise "`_schedule_next` marks
+`in_progress(expires_at=NULL)` immediately" no longer exists -- upstream
+#902 (2026-09) deferred the marking to skill_upgrade confirm. The
+`skland_ok` guard below is still active and still valuable: it protects
+against stale-cache kills and pending scheduling while Skland is down.
+
 `_schedule_next` marks `in_progress(expires_at=NULL)` immediately, but
 training doesn't physically start until `skill_upgrade` confirm stage
 sets `expires_at`. In between, MasterySync may run again, read stale
@@ -182,6 +191,14 @@ A failed plan must retain its target `level`. For legacy material failures that
 were stored with the default `level=1`, `retry_plan()` recovers the target from
 the `failed_reason="材料不足 levelN"` suffix before inserting the new pending row.
 
+**Superseded 2026-09-13 (commit 82e042cda)**: the in-room retry contract below
+(`_mastery` task ordering guard, target-in-slot check, `now + 5s` rebuild,
+`_mastery` protection from deletion) was removed together with the skill_upgrade
+entry guard block. Upstream semantics: scheduling puts operators in place;
+skill_upgrade executes unconditionally. See ADR 0002.
+
+<details><summary>Removed contract (historical)</summary>
+
 In `assistant_follows_schedule=false` mode, the `_mastery` temporary
 training-room task created by `MasterySync` must run before its
 `SKILL_UPGRADE` task. If the post-arrangement room read does not find the
@@ -200,25 +217,28 @@ The ordinary training-room protection must not delete a task with
 `meta_data="_mastery"`. The `assistant_follows_schedule=true` behavior,
 where the assistant slot follows the ordinary schedule, remains unchanged.
 
+</details>
+
 ## Manual Task Contract (手动任务必须写 DB 计划)
 
-`skill_upgrade()` 在 `assistant_follows_schedule=false` 时强校验
-`_mastery_context(plan_key)`：DB `mastery_plan` 表必须有对应
-`(char_id, skill_index)` 的 **in_progress** 计划（`get_in_progress_plan`），
-否则 WARNING `invalid mastery plan_key` 并静默跳过。
+**Updated 2026-09-13**: skill_upgrade no longer blocks manual tasks at entry
+(the `_mastery_context` check was removed). But writing a DB plan first is
+STILL mandatory for automatic progression: without an in_progress row,
+`refresh_skill_time` cannot mark completion nor enqueue the next level, so a
+manual SKILL_UPGRADE trains once and then the pipeline goes silent (no loop,
+but no next level either). Also, mower restart clears manual tasks
+(`handle_error` 超 15 分钟清非专精任务), while DB plans are re-scheduled by
+MasterySync after restart.
 
-因此所有专精入口都必须**先 POST /mastery-plan 写入 DB（pending）**，
+所有专精入口都必须**先 POST /mastery-plan 写入 DB（pending）**，
 再由 MasterySync 在下一次 `infra_main` 调度（排班 + SKILL_UPGRADE）。
-**禁止用 POST /task 手动添加 SKILL_UPGRADE 任务**——手动任务没有 DB
-计划，必然被 `_mastery_context` 拦下；且 mower 重启后手动任务会被
-`handle_error`（超 15 分钟清非专精任务）清掉，而 DB 计划重启后仍会
-被 MasterySync 重新调度。
+**禁止用 POST /task 手动添加 SKILL_UPGRADE 任务**。
 
 - 前端：`MasteryRecommendation.vue` `doAddTask()` 只调
   POST /mastery-plan（`{干员名: skill_index}`），不再 POST /task。
 - 后端：`server.py` `add_task` 对带 plan_key 的 SKILL_UPGRADE 仍保留
   （专精路线加载），但正常 UI 已不再走此路径。
-- 复现案例（2026-08-02）：WebUI 手动添加予愿安洁莉娜技能3 →
+- 历史案例（2026-08-02，旧入口校验时代）：WebUI 手动添加予愿安洁莉娜技能3 →
   `skill_upgrade: invalid mastery plan_key=char_1015_aglna2_2`，
   任务静默丢弃；DB 全表无 8 月新增记录。
 
