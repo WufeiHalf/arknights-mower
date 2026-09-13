@@ -1012,11 +1012,13 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                 if scene == Scene.INFRA_MAIN:
                     self.enter_room("train")
                 if scene == Scene.TRAIN_MAIN:
-                    completion_time = self.double_read_time(((236, 978), (380, 1020)))
-                    if task is not None:
-                        task.time = completion_time
-                    if completion_time <= datetime.now():
-                        is_completed = True
+                    seconds = self.read_time(((236, 978), (380, 1020)), upperlimit=None)
+                    if seconds is not None:
+                        completion_time = datetime.now() + timedelta(seconds=seconds)
+                        if task is not None:
+                            task.time = completion_time
+                        if seconds <= 0:
+                            is_completed = True
                     del tasks[0]
                 if scene == Scene.TRAIN_SKILL_SELECT:
                     self.back()
@@ -1068,15 +1070,16 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                 return
 
             char_id = training["trainee"]["charId"]
-            skill_index = training["trainee"]["targetSkill"]
-            logger.info(f"训练完成: char={char_id} skill_index={skill_index}")
-
             plan = get_in_progress_plan(include_expired=True)
             if not plan:
                 logger.info(
                     "refresh_skill_time: no in_progress plan, skipping completion"
                 )
                 return
+
+            # 以 plan 中的 skill_index 为准，避免使用 API 的 targetSkill=-1 占位值
+            skill_index = plan["skill_index"]
+            logger.info(f"训练完成: char={char_id} skill_index={skill_index}")
 
             plan_level = plan.get("level", 1)
 
@@ -1125,12 +1128,12 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             from arknights_mower.solvers.player_info import player_info_cache
             from arknights_mower.utils.mastery_db import get_in_progress_plan
 
-            remaining_h = (completion_time - datetime.now()).total_seconds() / 3600
-            if remaining_h <= 0:
-                return
-
             plan = get_in_progress_plan(include_expired=True)
             if not plan:
+                return
+
+            remaining_h = (completion_time - datetime.now()).total_seconds() / 3600
+            if remaining_h <= 0:
                 return
 
             if len(self.op_data.skill_upgrade_supports) == 0:
@@ -1773,12 +1776,15 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                         )
                     if tasks[0] == "confirm":
                         # 读取专精倒计时 如果没有，判定专精失败
-                        execute_time = self.double_read_time(((236, 978), (380, 1020)))
-                        if execute_time < (datetime.now() + timedelta(hours=2)):
+                        seconds = self.read_time(
+                            ((236, 978), (380, 1020)), upperlimit=None
+                        )
+                        if seconds is None or seconds < 2 * 3600:
                             raise Exception(
                                 "未获取专精时间倒计时，请确认技能专精材料充足"
                             )
                         else:
+                            execute_time = datetime.now() + timedelta(seconds=seconds)
                             plan_key = getattr(self.task, "plan_key", "")
                             if plan_key:
                                 parts = plan_key.rsplit("_", 1)
@@ -2235,8 +2241,25 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             try_workshop_tasks(self.op_data, self.tasks)
         if not self.find_next_task(datetime.now() + timedelta(minutes=5)):
             try_add_release_dorm({}, None, self.op_data, self.tasks)
-        # 专精计划由 MasterySync 统一调度（会同时生成上班任务和 SKILL_UPGRADE 任务）
-        # plan_solver 不再裸加 SKILL_UPGRADE 任务，避免和 MasterySync 冲突导致死循环
+        # 专精调度双入口：主循环 sync_and_schedule 为主（带 Skland 校验），
+        # 此处为排班后兜底入口（上游 #906），仅查队列无 SKILL_UPGRADE 时触发
+        pending = []
+        try:
+            from arknights_mower.utils.mastery_db import (
+                get_pending_plans,
+                has_in_progress_plan,
+            )
+
+            if has_in_progress_plan():
+                pass
+            else:
+                pending = get_pending_plans()
+        except Exception:
+            pass
+        if pending and not self.find_next_task(task_type=TaskTypes.SKILL_UPGRADE):
+            from arknights_mower.utils.mastery_sync import MasterySync
+
+            MasterySync(self)._schedule_next(pending[0])
         if self.find_next_task(datetime.now() + timedelta(seconds=15)):
             logger.info("有其他任务,跳过宿舍纠错")
             return
@@ -4698,11 +4721,19 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
             None,
         )
         if stage_meta is None:
-            return None
+            return self._ap_fallback_or_none()
         ap_cost = stage_meta.get("apCost")
         if not isinstance(ap_cost, int) or ap_cost <= 0:
-            return None
+            return self._ap_fallback_or_none()
         return ap_cost
+
+    def _ap_fallback_or_none(self) -> int | None:
+        from arknights_mower.utils.config import conf
+
+        fallback = conf.ap_fallback
+        if isinstance(fallback, int) and fallback > 0:
+            return fallback
+        return None
 
     def clear_local_operation_followups(self):
         existing_count = sum(
@@ -4974,6 +5005,15 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                         if any(
                             self.mower_stage_ap_cost(stage) is None for stage in stages
                         ):
+                            missing = [
+                                stage
+                                for stage in stages
+                                if self.mower_stage_ap_cost(stage) is None
+                            ]
+                            logger.error(
+                                f"关卡信息未找到，无法获取体力消耗: {missing}，"
+                                "请在「刷理智周计划」中设置 AP fallback（关卡体力消耗默认值）"
+                            )
                             logger.warning(
                                 "stage apCost missing in weekly plan, disable threshold control and fallback to drain sanity"
                             )
@@ -5036,6 +5076,7 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
 
                         if (
                             simulated_current_ap is not None
+                            and ap_cost is not None
                             and simulated_current_ap < ap_cost
                         ):
                             logger.info(

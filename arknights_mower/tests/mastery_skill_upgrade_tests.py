@@ -16,6 +16,8 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         self.solver.tasks = []
         self.solver.op_data = MagicMock()
         self.solver.op_data.skill_upgrade_supports = []
+        # 上游 #902 后倒计时改用 read_time（返回秒数），默认未完成训练（12h）
+        self.solver.read_time = MagicMock(return_value=12 * 3600)
 
     def _plan_context_patches(self, level=1, name="目标"):
         plan = {"char_id": "char", "skill_index": 0, "level": level}
@@ -50,6 +52,7 @@ class TestMasterySkillUpgrade(unittest.TestCase):
     def test_mastery_sync_schedules_collection_for_expired_completed_training(self):
         scheduler = MagicMock()
         scheduler.tasks = []
+        scheduler.find_next_task = MagicMock(return_value=None)
         training = {
             "trainee": {"charId": "char", "targetSkill": 0},
             "trainer": {"charId": "support"},
@@ -87,6 +90,7 @@ class TestMasterySkillUpgrade(unittest.TestCase):
     def test_mastery_sync_does_not_treat_slot_state_two_as_completion(self):
         scheduler = MagicMock()
         scheduler.tasks = []
+        scheduler.find_next_task = MagicMock(return_value=None)
         training = {
             "trainee": {"charId": "char", "targetSkill": 0},
             "trainer": {"charId": "support"},
@@ -125,6 +129,7 @@ class TestMasterySkillUpgrade(unittest.TestCase):
     def test_mastery_sync_links_arrangement_and_upgrade_by_plan_key(self):
         scheduler = MagicMock()
         scheduler.tasks = []
+        scheduler.find_next_task = MagicMock(return_value=None)
         scheduler.op_data.skill_upgrade_supports = []
         support = MagicMock()
         support.name = "助手"
@@ -153,7 +158,9 @@ class TestMasterySkillUpgrade(unittest.TestCase):
         self.assertEqual(scheduler.tasks[0].meta_data, "_mastery")
         self.assertEqual(scheduler.tasks[0].plan_key, "char_0")
         self.assertEqual(scheduler.tasks[1].plan_key, "char_0")
-        insert_plan.assert_called_once()
+        # 上游 #902 后调度时不再提前标 in_progress，
+        # 等skill_upgrade 确认开训才标记，避免误判反复加 REFRESH_TIME
+        insert_plan.assert_not_called()
 
     def test_schedule_next_selects_support_for_target_level(self):
         scheduler = MagicMock()
