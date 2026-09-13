@@ -78,6 +78,11 @@ proot-distro login ubuntu -- bash ...             # 3 (container reads Termux ho
 ## WebUI / remote access (implemented 2026-08-02)
 
 - WebUI: `http://127.0.0.1:58000?token=mower` (adb forward from laptop).
+- **Tailscale direct** (2026-09-13, preferred when off-LAN): `adb connect
+  100.98.152.81:5555` for all deploy scripts, ssh :8022 as fallback; used
+  for the v6.16.0 -> v6.17.5 software update (2026-09-13, `--software`
+  path, rollback point `/root/maa.bak.20260913-182331`). Details in
+  `my-mower-phone/docs/operations.md`.
 - External access: **autossh reverse tunnel** (Termux `remote-tunnel.sh`):
   phone -> `ssh -R 0.0.0.0:58000:127.0.0.1:58000 root@38.92.15.224` (binds
   server 127.0.0.1; `GatewayPorts` NOT needed since Nginx proxies locally).

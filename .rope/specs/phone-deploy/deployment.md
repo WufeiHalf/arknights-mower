@@ -67,15 +67,46 @@ Verified by md5 comparison: git repo has no `conf.yml` at all
 `--clean` mode backs up these files to `/root/.mower-backup/` before
 deleting the tree, then restores them after extraction.
 
+**--clean trap (fixed in my-mower-phone 6c36c96)**: extraction must target
+`-C $PROOT_MOWER --strip-components=1`. An earlier version extracted to
+`-C /root`, dumping the whole tree flat into `/root` (server.py,
+arknights_mower/, ...) while `/root/arknights-mower` stayed an empty shell;
+python then imported the flat copy via sys.path fallback and WebUI came up
+200 while `/start` failed on templates. Recovery: delete the flat files by
+tar top-level manifest, redeploy.
+
 ## Phone Environment
 
 - **Termux** + proot-distro ubuntu
 - MAA at `/root/maa` (has `libMaaCore.so`, `Python/asst/`)
-- ADB: `127.0.0.1:5555`, touch: `maatouch`
-- WebUI: `http://127.0.0.1:58000?token=mower`
+- ADB to phone: USB, or Tailscale `100.98.152.81:5555` (host `redmi-k30-5g`, sshd :8022; adbd tcp mode survives until phone reboot). All deploy scripts work identically over either -- `adb connect` first. Tailscale verified 2026-09-13 with full mower + MAA v6.17.5 deployment.
+- touch: `maatouch`
+- WebUI: `http://127.0.0.1:58000?token=mower` (adb forward), or directly `http://100.98.152.81:58000?token=mower` inside the tailnet
 - Scripts: `restart-mower.sh`, `sync-to-phone.sh`, `push-dist.sh`,
   `package-and-push.sh` (in `my-mower-phone/scripts/`)
 - Logs: `~/mower-service.log` (Termux home)
+- `@internal` path contract (source-tree deploy has no `.git`):
+  `find_git_root(cwd)` falls back to **cwd**, so mower must be started with
+  cwd = `/root/arknights-mower` (mower.sh does `cd` there). If the tree is
+  extracted anywhere else, jinja2 templates (`arknights_mower/templates/`)
+  are not found and `/start` dies with TemplateNotFound.
+
+## Dependency Changes (offline install)
+
+Upstream 4.1.5.8 (#904) swapped pandas->stdlib csv, jieba->rjieba. Phone
+container has no reliable pip network; install wheels offline:
+
+```bash
+# laptop (proxy): download aarch64 wheel
+pip download rjieba==0.2.1 --platform manylinux2014_aarch64 \
+  --only-binary=:all: --python-version 3.12 --no-deps -d /tmp/rjieba-pkg
+# keep the canonical wheel FILENAME (pip rejects rjieba.whl)
+adb push /tmp/rjieba-pkg/<full-wheel-name> /data/local/tmp/
+# then into container: pip install --break-system-packages <wheel>
+```
+
+Old pandas/jieba stay installed (unused, harmless) -- do not uninstall
+(numpy is shared with other local scripts).
 
 ## Phone-Only Patches (on phone/dev, not in upstream PRs)
 
@@ -115,7 +146,10 @@ are complementary, not conflicting. Resolved in `1389754f6`:
   Skland-guard / `_auto_complete_level3`
 
 After merging, always: `unittest discover -p "*_tests.py"` + `ruff`
-before pushing phone/dev.
++ `npm run build` (in `ui/`) before pushing phone/dev. The vite build step
+catches unresolved merge-conflict markers inside JSON/vue assets that
+`git add -A` happily commits (hit 2026-09-13: event_data.json shipped with
+conflict markers, only surfaced at build; fixed in ee67eab07).
 
 ## Wrong vs Correct
 
