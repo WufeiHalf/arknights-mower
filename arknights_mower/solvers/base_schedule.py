@@ -60,9 +60,7 @@ from arknights_mower.utils.graph import SceneGraphSolver
 from arknights_mower.utils.image import cropimg, loadres, thres2
 from arknights_mower.utils.log import logger
 from arknights_mower.utils.maa_check import (
-    check_blackflow_prereqs,
     is_maa_connectivity_check_enabled,
-    parse_maa_version,
     run_maa_connectivity_check,
 )
 from arknights_mower.utils.operators import Operator, Operators
@@ -4369,9 +4367,9 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                     rg_sleep = min_time < now_time < max_time
             except ValueError:
                 rg_sleep = False
-            if (conf.RG or conf.SSS or conf.RCL or conf.BF) and not rg_sleep:
-                logger.info("准备开始：肉鸽/保全/盐酸/黑流树海")
-                send_message("启动 肉鸽/保全/盐酸/黑流树海")
+            if (conf.RG or conf.SSS or conf.RCL) and not rg_sleep:
+                logger.info("准备开始：肉鸽/保全/盐酸")
+                send_message("启动 肉鸽/保全/盐酸")
                 while True:
                     self.MAA = None
                     self.initialize_maa()
@@ -4419,21 +4417,6 @@ class BaseSchedulerSolver(SceneGraphSolver, BaseMixin):
                                 "increment_mode": conf.rcl.increment_mode,
                                 "num_craft_batches": conf.rcl.num_craft_batches,
                             },
-                        )
-                    elif conf.BF:
-                        # 黑流树海刷钱：预检（版本 + OTA 任务链）→ 导航到“开始探索”界面
-                        # → 追加 MAA 牛杂 Custom 任务链。预检失败抛异常走现有 except 路径。
-                        check_blackflow_prereqs(
-                            parse_maa_version(self.MAA.get_version()),
-                            pathlib.Path(conf.maa_path)
-                            / "cache"
-                            / "resource"
-                            / "tasks.json",
-                        )
-                        self.to_blackflow()
-                        self.MAA.append_task(
-                            "Custom",
-                            {"task_names": ["BlackFlowTemporary@Begin"]},
                         )
                     logger.info("启动")
                     self.MAA.start()

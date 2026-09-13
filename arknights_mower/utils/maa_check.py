@@ -7,11 +7,6 @@ from arknights_mower.utils import config
 
 MAA_CHECK_TIMEOUT = 30
 
-# 黑流树海刷钱（牛杂 OTA 入口）要求的最低 MAA 版本
-MAA_BLACKFLOW_MIN_VERSION = (6, 14, 0)
-# 黑流树海刷钱任务链入口（OTA 下发，含 Begin/StartExplore/投资等 35 步）
-BLACKFLOW_TASK_NAME = "BlackFlowTemporary@Begin"
-
 MAA_CHECK_SCRIPT = r"""
 import json
 import pathlib
@@ -135,53 +130,3 @@ def run_maa_connectivity_check(
 
 def is_maa_connectivity_check_enabled() -> bool:
     return bool(config.conf.maa_startup_check)
-
-
-def parse_maa_version(version_str: str) -> tuple[int, int, int]:
-    """解析 "v6.14.2" 风格 MAA 版本号为 (6, 14, 2)。
-
-    alpha/beta 通道版本号形如 "v6.16.9-alpha.1.d013.g66018a451f"（`-` 后缀
-    附着在第 3 段），取前 3 段数字，其余构建信息忽略；不足 3 段或前 3 段
-    含非数字段抛 ValueError。
-    """
-    text = version_str.strip()
-    if text.startswith("v"):
-        text = text[1:]
-    parts = text.replace("-", ".").split(".")[:3]
-    if len(parts) != 3:
-        raise ValueError(f"无法解析 MAA 版本号：{version_str!r}")
-    try:
-        major, minor, patch = (int(part) for part in parts)
-    except ValueError:
-        raise ValueError(f"无法解析 MAA 版本号：{version_str!r}") from None
-    return major, minor, patch
-
-
-def check_blackflow_version(version: tuple[int, int, int]) -> None:
-    """MAA 版本低于 v6.14.0 时抛异常（黑流树海刷钱依赖该版本引入的牛杂入口）。"""
-    if version < MAA_BLACKFLOW_MIN_VERSION:
-        current = ".".join(str(part) for part in version)
-        raise Exception(f"黑流树海刷钱需要 MAA ≥ v6.14.0，当前 {current}，请升级 MAA")
-
-
-def check_blackflow_tasks(tasks_json_path) -> None:
-    """本地 MAA 资源 tasks.json 缺少 BlackFlowTemporary 任务链时抛异常。"""
-    try:
-        with open(tasks_json_path, "r", encoding="utf-8") as f:
-            tasks = json.load(f)
-    except json.JSONDecodeError as e:
-        raise Exception(
-            f"MAA 资源 tasks.json 解析失败（{tasks_json_path}）：{e}，请更新 MAA 资源"
-        ) from e
-    except OSError as e:
-        raise Exception(
-            f"MAA 资源 tasks.json 读取失败（{tasks_json_path}）：{e}，请更新 MAA 资源"
-        ) from e
-    if not isinstance(tasks, dict) or BLACKFLOW_TASK_NAME not in tasks:
-        raise Exception("MAA 资源未包含 BlackFlowTemporary 任务链，请更新 MAA 资源")
-
-
-def check_blackflow_prereqs(maa_version: tuple[int, int, int], tasks_json_path) -> None:
-    """黑流树海刷钱启动前预检：MAA 版本 + 任务链存在性，任一不满足即报错。"""
-    check_blackflow_version(maa_version)
-    check_blackflow_tasks(tasks_json_path)
