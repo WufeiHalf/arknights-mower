@@ -280,6 +280,19 @@ Deliberately NOT adopted (kept local):
 ## Tests Required
 
 - Mastery scheduling regression: false 模式下 `_mastery` 不被普通训练室保护逻辑跳过；目标训练位为空或错位时不点击专精，按 `plan_key` 去重并以 `now + 5 秒` 重试；true 模式保持兼容。
+  **Superseded 2026-09-13 (commit 82e042cda)**: the whole entry guard block
+  (`_mastery_context` / `_mastery_target_in_training_room` /
+  `_mastery_support_for_plan` / `_requeue_mastery_upgrade` /
+  `_retry_mastery_arrangement`) was REMOVED. Root cause: upstream #902
+  deferred in_progress marking (only after confirm-phase countdown), while
+  the local guard required status='in_progress' at entry -- deadlock:
+  repeated re-scheduling every ~30s, training never started.
+  Upstream semantics adopted: scheduling puts operators in place,
+  `skill_upgrade` executes unconditionally, confirm marks in_progress.
+  Two local deviations kept: `expires_at` written in local time (upstream
+  UTC + SQL localtime comparison would expire plans 8h early, guarded by
+  `test_update_expires_at_uses_local_database_time`), and OCR-based level
+  inference stays upstream (DB plan-level priority removed with the guard).
 
 ## Key Files
 
