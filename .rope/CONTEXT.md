@@ -117,24 +117,9 @@ capacity limit (the game has none) -- it's the target level mower maintains.
 Default 30. Pairs with `children_lower_limit` (sub-material floor).
 _Avoid_: "仓库上限", "材料上限" (ambiguous; sounds like a game constraint).
 
-**牛杂（MiniGame）**:
-MAA WPF GUI 里 MiniGame（小游戏）模块的显示名（官方本地化
-`MiniGame = 牛杂`）。官方文档定义"用于自动刷活动中的小游戏"。
-黑流树海刷钱入口挂在此模块下。mower 侧不直接与牛杂 GUI 交互，
-通过 MAA `Custom` 任务链调用。
-_Avoid_: 把"牛杂"当独立 MAA 任务类型（它只是 GUI 分类名）。
-
-**黑流树海刷钱（BlackFlowTemporary）**:
-MAA 官方资源 OTA 下发的牛杂入口（`gui/StageActivityV2.json` miniGame 项），
-`Value = "BlackFlowTemporary@Begin"`，要求 MAA ≥ v6.14.0。任务链 35 步：
-选特勤分队→招募→行动力→投资存钱→钱满退出重开。mower 调用方式：
-`append_task("Custom", {"task_names": ["BlackFlowTemporary@Begin"]})`。
-与正式 BlackFlow 肉鸽主题（`theme:"BlackFlow"`，上游 PR #17380/#17481 未合入）**不是一回事**。
-_Avoid_: 把黑流树海刷钱与"Roguelike theme=BlackFlow"混为一谈（后者暂不可用）。
-
-**to_blackflow**:
-mower 导航到黑流树海"开始探索"界面的方法（`utils/solver.py`），
-参照 `to_reclamation` 范式：终端→长期探索→集成战略入口→黑流树海主题→
-停在开始探索界面，然后交给 MAA。模板在 `resources/bf/`（Slice 3 补素材，
-占位期缺失模板按"未命中"warning 处理）。
-_Avoid_: 与 `to_reclamation`/`to_sss` 混淆（那是生息演算/保全导航）。
+**黑流树海（BlackFlow）**:
+MAA 原生 Roguelike 主题之一（`maa_rg_theme = "BlackFlow"`），mower 走现有
+RG 大型任务通道即可，无需本地导航。2026-09 已回退早期的本地"牛杂"方案
+（mower 导航 + Custom 任务链）；上游支持等 alpha 合回 dev 后随同步获得。
+_Avoid_: 为黑流树海重建本地导航或 Custom 任务链；"牛杂"（已回退的旧方案名）；
+把黑流树海当独立 MAA 任务类型（它是 RG 主题）。

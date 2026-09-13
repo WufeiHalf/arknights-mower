@@ -64,7 +64,7 @@
 
 ## Slice 3: 导航模板入库 + 手机端验证
 
-- Status: in-progress（本地部分完成，E2 上机验证待用户回家）
+- Status: abandoned（上游 alpha 已提供原生 RG 通道支持，本 issue 整体回退，2026-09-13）
 - Kind: vertical
 - Local verification: 3 模板（integrated_strategy/blackflow_theme/start_explore）按 1920×1080 运行时坐标系从 2640×1216 截图缩放裁剪入库；真实 find 链路 3 HIT + 6 误匹配 MISS；端到端导航模拟点击序列正确（提交 56d166270）
 - Remaining: E1 手机端 MAA 能力验证（user-run）+ E2 上机全链路（user-run）

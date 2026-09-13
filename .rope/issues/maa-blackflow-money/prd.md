@@ -1,5 +1,11 @@
 # 集成战略：黑流树海刷钱（牛杂）
 
+> **Status: ABANDONED（2026-09-13）** — MAA v6.17.5 将黑流树海做成原生
+> Roguelike 主题，mower 上游 alpha #991/#994/#1009 已提供完整 RG 通道支持
+> （前端主题/分队/策略 + 后端条件字段下发 + 误退出修复，待合回 dev）。本方案
+> （mower 导航 + Custom 任务链）已整体回退，勿基于本包继续开发；黑流树海需求
+> 由 RG 通道 + 上游同步承接。调研事实见 `.rope/research/blackflow-native-rg.md`。
+
 ## Problem Statement
 
 MAA 上游在"牛杂"（MiniGame）模块通过资源 OTA 下发了新集成战略「沉沦者的黑流树海」的刷钱入口（`BlackFlowTemporary` 任务链：选分队→招募→行动力→投资存钱→钱满重开）。mower 目前大型任务只支持肉鸽（RG）/保全（SSS）/生息演算（RCL）/生息演算自跑（RA）/隐秘战线（SF），无法调用这个新刷钱功能。用户希望 mower 大型任务里新增"黑流树海刷钱"，由 mower 自动导航到黑流树海"开始探索"界面后交给 MAA 刷钱。
