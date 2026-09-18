@@ -1,5 +1,9 @@
 import subprocess
 import unittest
+from datetime import datetime, timedelta
+
+import cv2
+import numpy as np
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -391,3 +395,32 @@ class TestStartDroidcast(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DroidcastScreencapTests(unittest.TestCase):
+    def _device(self):
+        device = Device.__new__(Device)
+        device.control = MagicMock()
+        device.control.mumu12IPC = None
+        device.recover = lambda f: f()
+        return device
+
+    def test_screencap_restores_16_9_logical_resolution(self):
+        from arknights_mower.utils import config as cfg
+
+        runtime = MagicMock(port=12345)
+        runtime.session.get.return_value.content = cv2.imencode(
+            ".jpg", np.zeros((1080, 2400, 3), np.uint8)
+        )[1].tobytes()
+        with (
+            patch.object(cfg.conf.droidcast, "enable", True),
+            patch.object(cfg.conf.droidcast, "rotate", False),
+            patch.object(cfg, "droidcast", runtime),
+            patch("arknights_mower.utils.device.device.save_screenshot"),
+            patch.object(cfg, "screenshot_time"),
+        ):
+            cfg.screenshot_time = datetime.now() - timedelta(seconds=10)
+            screencap, _, _ = self._device().screencap()
+        data = getattr(screencap, "tobytes", lambda: screencap)()
+        img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(img.shape[:2], (1080, 1920))

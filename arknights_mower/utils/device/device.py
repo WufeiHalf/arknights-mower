@@ -461,6 +461,13 @@ class Device:
                 return session.get(url).content
 
             img = bytes2img(self.recover(grab_droidcast))
+            h, w = img.shape[:2]
+            target_w = h * 16 // 9
+            if abs(w - target_w) > 2:
+                # DroidCast 截取的是物理屏分辨率；设置了 wm size override 的
+                # 设备（如 1080x1920）上，物理画面是逻辑画面的等比拉伸，
+                # 需还原到 16:9 逻辑分辨率才能与 adb screencap 坐标一致
+                img = cv2.resize(img, (target_w, h))
             if config.conf.droidcast.rotate:
                 img = cv2.rotate(img, cv2.ROTATE_180)
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
