@@ -303,6 +303,48 @@ class Device:
         logger.info(f"成功获取CLASSPATH：{class_path}")
         return class_path
 
+    def _droidcast_alive(self, timeout: float = 5) -> bool:
+        """探测当前端口的 DroidCast 是否能正常出图。"""
+        try:
+            resp = config.droidcast.session.get(
+                f"http://127.0.0.1:{config.droidcast.port}/screenshot",
+                timeout=timeout,
+            )
+            return resp.status_code == 200 and bool(resp.content)
+        except Exception:
+            return False
+
+    def _wait_droidcast_alive(self, port: int, timeout: float = 10.0) -> bool:
+        """等待 DroidCast 就绪；刚启动的实例需要数秒完成初始化。"""
+        config.droidcast.port = port
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._droidcast_alive():
+                return True
+            time.sleep(1)
+        return False
+
+    def _launch_droidcast(self, class_path: str, port: int) -> None:
+        """以 export 前缀 + nohup 后台形式启动 DroidCast。
+
+        `CLASSPATH=x app_process ...` 前缀形式在部分真机环境（proot 容器内的
+        adb 发起的 shell）下实例会假死：端口可连但截图请求永不返回。
+        export 形式配合脱离会话的后台启动可稳定工作。
+        """
+        apk_path = class_path.removeprefix("CLASSPATH=")
+        command = (
+            f"nohup sh -c 'export CLASSPATH={apk_path};"
+            f" exec app_process / com.rayworks.droidcast.Main --port={port}'"
+            " </dev/null >/dev/null 2>&1 &"
+        )
+        self.client.cmd(["shell", command])
+
+    def _stop_droidcast_process(self, port: int) -> None:
+        try:
+            self.client.cmd(["shell", f"pkill -f 'port={port}'"])
+        except Exception:
+            logger.debug(f"停止DroidCast进程（port={port}）失败", exc_info=True)
+
     def start_droidcast(self) -> bool:
         class_path = self.get_droidcast_classpath()
         if not class_path:
@@ -354,19 +396,20 @@ class Device:
                 config.droidcast.port = 0
                 raise
         logger.info("ADB端口转发成功，启动DroidCast")
-        if config.droidcast.process is not None:
-            config.droidcast.process.terminate()
-        process = self.client.process(
-            class_path,
-            [
-                "app_process",
-                "/",
-                "com.rayworks.droidcast.Main",
-                f"--port={port}",
-            ],
-        )
-        config.droidcast.process = process
-        return True
+        config.droidcast.process = None
+        if self._droidcast_alive():
+            logger.info(f"DroidCast端口{port}已有健康实例，直接复用")
+            return True
+        for attempt in range(1, 4):
+            self._stop_droidcast_process(port)
+            self._launch_droidcast(class_path, port)
+            if self._wait_droidcast_alive(port):
+                logger.info(f"DroidCast启动成功（port={port}，第{attempt}次尝试）")
+                return True
+            logger.warning(f"DroidCast启动后未就绪（第{attempt}次尝试）")
+        logger.error("DroidCast启动失败：实例持续无响应")
+        config.droidcast.port = 0
+        return False
 
     def screencap(self) -> bytes:
         start_time = datetime.now()
