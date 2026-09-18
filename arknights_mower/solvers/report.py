@@ -156,7 +156,7 @@ class ReportSolver(SceneGraphSolver):
                 return False
             _, rows = read_csv_rows(self.record_path, encoding="gbk")
             for item in rows:
-                if item[0] == self.date:
+                if item.iloc[0] == self.date:
                     return True
             return False
         except PermissionError:
