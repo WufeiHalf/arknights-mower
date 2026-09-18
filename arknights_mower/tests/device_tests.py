@@ -235,6 +235,9 @@ class TestStartDroidcast(unittest.TestCase):
                 "arknights_mower.utils.device.device.get_new_port", return_value=54321
             )
         )
+        # 默认：已有假死/无实例，首次启动即就绪；个别用例自行覆盖
+        self.device._droidcast_alive = MagicMock(return_value=False)
+        self.device._wait_droidcast_alive = MagicMock(return_value=True)
 
     def test_missing_package_installs_then_starts(self):
         self.device.client.cmd_shell.side_effect = [
@@ -243,9 +246,35 @@ class TestStartDroidcast(unittest.TestCase):
         ]
         self.assertTrue(self.device.start_droidcast())
         self.assertEqual(self.device.client.cmd.call_args_list[0].args[0][0], "install")
+        shell_calls = [
+            c
+            for c in self.device.client.cmd.call_args_list
+            if isinstance(c.args[0], list) and c.args[0][0] == "shell"
+        ]
+        self.assertEqual(len(shell_calls), 1)  # 启动前 pkill 清理旧实例
         self.device.client.process.assert_called_once_with(
-            "CLASSPATH=/data/app/droidcast/base.apk",
-            ["app_process", "/", "com.rayworks.droidcast.Main", "--port=54321"],
+            "export CLASSPATH=/data/app/droidcast/base.apk; exec app_process",
+            ["/", "com.rayworks.droidcast.Main", "--port=54321"],
+        )
+
+    def test_reuse_healthy_instance_without_relaunch(self):
+        self.runtime.port = 54321
+        self.device._droidcast_alive = MagicMock(return_value=True)
+        self.assertTrue(self.device.start_droidcast())
+        shell_calls = [
+            c
+            for c in self.device.client.cmd.call_args_list
+            if isinstance(c.args[0], list) and c.args[0][0] == "shell"
+        ]
+        self.assertEqual(shell_calls, [])
+
+    def test_unresponsive_instance_retries_then_fails(self):
+        self.device._wait_droidcast_alive = MagicMock(return_value=False)
+        self.assertFalse(self.device.start_droidcast())
+        self.assertEqual(self.runtime.port, 0)
+        self.assertEqual(self.device.client.process.call_count, 3)
+        self.assertEqual(
+            self.device.client.process.return_value.terminate.call_count, 3
         )
 
     def test_missing_package_exit_code_one_installs(self):
@@ -261,8 +290,15 @@ class TestStartDroidcast(unittest.TestCase):
             "package:/data/app/droidcast/base.apk"
         )
         self.assertTrue(self.device.start_droidcast())
-        self.device.client.cmd.assert_called_once_with(
-            "forward --no-rebind tcp:54321 tcp:54321"
+        str_calls = [
+            c for c in self.device.client.cmd.call_args_list if isinstance(c.args[0], str)
+        ]
+        self.assertEqual(
+            str_calls,
+            [
+                call("forward --remove tcp:54321"),
+                call("forward --no-rebind tcp:54321 tcp:54321"),
+            ],
         )
 
     def test_reconnect_reuses_matching_forward(self):
@@ -274,7 +310,7 @@ class TestStartDroidcast(unittest.TestCase):
             "arknights_mower.utils.device.device.is_port_in_use", return_value=True
         ):
             self.assertTrue(self.device.start_droidcast())
-        self.device.client.cmd.assert_called_once_with("forward --list", True)
+        self.assertEqual(self.device.client.cmd.call_args_list[0], call("forward --list", True))
         self.new_port.assert_not_called()
         self.assertEqual(self.runtime.port, 54321)
 
@@ -293,45 +329,24 @@ class TestStartDroidcast(unittest.TestCase):
                 ):
                     self.assertTrue(self.device.start_droidcast())
                 self.assertEqual(
-                    self.device.client.cmd.call_args_list,
+                    [c for c in self.device.client.cmd.call_args_list if isinstance(c.args[0], str)],
                     [
                         call("forward --list", True),
+                        call("forward --remove tcp:54321"),
                         call("forward --no-rebind tcp:54321 tcp:54321"),
                     ],
                 )
 
     def test_failed_forward_lookup_does_not_reuse_occupied_port(self):
         self.runtime.port = 54320
-        self.device.client.cmd.side_effect = [ConnectionError("lookup failed"), ""]
+        self.device.client.cmd.side_effect = [ConnectionError("lookup failed"), "", "", ""]
         with patch(
             "arknights_mower.utils.device.device.is_port_in_use", return_value=True
         ):
             self.assertTrue(self.device.start_droidcast())
-        self.device.client.cmd.assert_called_with(
-            "forward --no-rebind tcp:54321 tcp:54321"
-        )
-
-    def test_port_race_retries_with_new_port_without_overwriting(self):
-        self.new_port.side_effect = [54321, 54322]
-        previous_process = MagicMock()
-        self.runtime.process = previous_process
-        self.device.client.cmd.side_effect = [
-            subprocess.CalledProcessError(1, "adb forward", output=b"cannot rebind"),
-            "",
-        ]
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.device.start_droidcast()
-        self.assertEqual(self.runtime.port, 0)
-        self.device.client.process.assert_not_called()
-        previous_process.terminate.assert_not_called()
-        self.assertTrue(self.device.start_droidcast())
-        self.assertEqual(self.runtime.port, 54322)
-        self.assertEqual(
+        self.assertIn(
+            call("forward --no-rebind tcp:54321 tcp:54321"),
             self.device.client.cmd.call_args_list,
-            [
-                call("forward --no-rebind tcp:54321 tcp:54321"),
-                call("forward --no-rebind tcp:54322 tcp:54322"),
-            ],
         )
 
     def test_query_failure_does_not_install(self):

@@ -158,6 +158,16 @@
           }
         }
       ]
+    },
+    "AT-8": {
+      "updated_at": "2026-09-19T00:54:29",
+      "stage_type": "ACTIVITY",
+      "success": true,
+      "steps": [
+        {
+          "action": "stale"
+        }
+      ]
     }
   },
   "patterns": {
@@ -269,6 +279,17 @@
             "text": "TO-9",
             "success": true
           }
+        }
+      ]
+    },
+    "AT-*": {
+      "updated_at": "2026-09-19T00:54:29",
+      "stage_type": "ACTIVITY",
+      "source_stage": "AT-8",
+      "success": true,
+      "steps": [
+        {
+          "action": "stale"
         }
       ]
     }
