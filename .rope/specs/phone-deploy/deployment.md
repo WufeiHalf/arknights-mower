@@ -25,6 +25,15 @@ upstream/dev  ──>  feat/* (开发 + PR)
 - `phone/dev` lives on `origin` (WufeiHalf fork) only. Never open a PR
   to `upstream` from it.
 - Feature branches always branch from `upstream/dev`, not `phone/dev`.
+- Since 4.1.6-alpha.5 (2026-09), upstream's active line is **`upstream/alpha`
+  (release tags `v4.1.6-alpha.N`)**, not `upstream/dev` (stale, pre-mastery
+  refactor). Sync phone/dev by merging the alpha tag. After alpha.6, mastery
+  code is fully upstream -- phone/dev carries no local mastery diffs. The
+  complete local-diff list vs the alpha baseline lives in the meta repo:
+  `my-mower-phone/docs/alpha-local-patches.md` (DroidCast fixes, asst path
+  priority, fix-plan guard, maa_check, nav_trie steps; plus test-env gotchas
+  -- run pytest with a clean `MOWER_DATA_DIR`, else the dev conf.yml flips
+  performance_mode to "custom" and ~27 selection-timing tests fail).
 - Before deploying to phone, merge the feature branch into `phone/dev`.
 - After upstream merges the feature, `phone/dev` does `git merge upstream/dev`
   to absorb it, keeping phone-only patches.
