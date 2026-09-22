@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { normalizePerformanceMode, performanceProfile } from '@/utils/performanceProfile'
 import { defineStore } from 'pinia'
 import { inject, ref, watch, watchEffect } from 'vue'
 import { createWorkshopState } from '@/utils/workshopConfig'
@@ -52,7 +53,10 @@ export const useConfigStore = defineStore('config', () => {
   const reload_room = ref('')
   const run_order_delay = ref(10)
   const low_frame_rate_mode = ref(false)
-  const dorm_order = ref([])
+  const performance_mode = ref('high')
+  const performance_effective_mode = ref('high')
+  const selection_poll_interval = ref(0.1)
+  const selection_transition_timeout = ref(2.5)
   const start_automatically = ref(false)
   const maa_mall_buy = ref('')
   const maa_mall_blacklist = ref('')
@@ -61,6 +65,8 @@ export const useConfigStore = defineStore('config', () => {
   const maa_gap = ref(false)
   const simulator = ref({ name: '', index: -1 })
   const resting_threshold = ref(50)
+  const version_update_resting_threshold = ref(80)
+  const version_update_threshold_advance_hours = ref(12)
   const fia_threshold = ref(90)
   const rescue_threshold = ref(75)
   const favorite = ref([])
@@ -124,6 +130,7 @@ export const useConfigStore = defineStore('config', () => {
   const recruit_robot = ref(true)
   const recruit_auto_only5 = ref(true)
   const run_order_grandet_mode = ref({})
+  const product_switching = ref({})
   const check_mail_enable = ref(true)
   const report_enable = ref(true)
   const recruit_gap = ref(false)
@@ -137,9 +144,11 @@ export const useConfigStore = defineStore('config', () => {
   const sf_target = ref('结局A')
   const touch_method = ref('scrcpy')
   const free_room = ref(false)
+  const experimental_dorm_logic = ref(false)
+  const dorm_order = ref([])
   const merge_interval = ref(10)
   const fia_fool = ref(true)
-  const refresh_backup_plan_after_mood = ref(false)
+  const refresh_backup_plan_after_mood = ref(true)
   const assistant_follows_schedule = ref(false)
   const enable_mastery = ref(true)
   const sign_in = ref({ enable: true })
@@ -415,8 +424,25 @@ export const useConfigStore = defineStore('config', () => {
   async function load_config() {
     const response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/conf`)
     runtime_platform.value = response.data.runtime_platform || ''
+    performance_mode.value = normalizePerformanceMode(
+      response.data.performance_mode,
+      response.data.low_frame_rate_mode,
+      runtime_platform.value
+    )
+    performance_effective_mode.value =
+      response.data.performance_effective_mode ||
+      (performance_mode.value === 'auto'
+        ? runtime_platform.value === 'android'
+          ? 'medium'
+          : 'high'
+        : performance_mode.value)
+    const fallbackProfile = performanceProfile(performance_mode.value, runtime_platform.value)
     low_frame_rate_mode.value =
-      response.data.low_frame_rate_mode ?? runtime_platform.value === 'android'
+      response.data.low_frame_rate_mode ?? fallbackProfile.lowFrameRateMode
+    selection_poll_interval.value =
+      response.data.selection_poll_interval ?? fallbackProfile.selectionPollInterval
+    selection_transition_timeout.value =
+      response.data.selection_transition_timeout ?? fallbackProfile.selectionTransitionTimeout
     adb.value = response.data.adb
     drone_count_limit.value = response.data.drone_count_limit
     drone_room.value = response.data.drone_room
@@ -465,9 +491,8 @@ export const useConfigStore = defineStore('config', () => {
     custom_smtp_server.value = response.data.custom_smtp_server
     package_type.value = response.data.package_type == 1 ? 'official' : 'bilibili'
     reload_room.value = response.data.reload_room == '' ? [] : response.data.reload_room.split(',')
-    run_order_delay.value = response.data.run_order_delay
+    run_order_delay.value = response.data.run_order_delay ?? fallbackProfile.runOrderDelay
 
-    dorm_order.value = response.data.dorm_order == '' ? [] : response.data.dorm_order.split(',')
     start_automatically.value = response.data.start_automatically
     maa_mall_buy.value =
       response.data.maa_mall_buy == '' ? [] : response.data.maa_mall_buy.split(',')
@@ -476,6 +501,10 @@ export const useConfigStore = defineStore('config', () => {
     maa_gap.value = response.data.maa_gap
     simulator.value = response.data.simulator
     resting_threshold.value = response.data.resting_threshold * 100
+    version_update_resting_threshold.value =
+      (response.data.version_update_resting_threshold ?? 0.8) * 100
+    version_update_threshold_advance_hours.value =
+      response.data.version_update_threshold_advance_hours ?? 12
     fia_threshold.value = response.data.fia_threshold * 100
     rescue_threshold.value = response.data.rescue_threshold * 100
     favorite.value = response.data.favorite == '' ? [] : response.data.favorite.split(',')
@@ -499,7 +528,8 @@ export const useConfigStore = defineStore('config', () => {
     rogue.value = response.data.rogue
     sss.value = response.data.sss
     screenshot.value = response.data.screenshot
-    screenshot_interval.value = response.data.screenshot_interval
+    screenshot_interval.value =
+      response.data.screenshot_interval ?? fallbackProfile.screenshotInterval
     mail_subject.value = response.data.mail_subject
     skland_enable.value = response.data.skland_enable != 0
     ai_key.value = response.data.ai_key
@@ -509,7 +539,18 @@ export const useConfigStore = defineStore('config', () => {
     recruitment_permit.value = response.data.recruitment_permit
     recruit_robot.value = response.data.recruit_robot
     recruit_auto_only5.value = response.data.recruit_auto_only5
-    run_order_grandet_mode.value = response.data.run_order_grandet_mode
+    run_order_grandet_mode.value = {
+      enable: false,
+      buffer_time: fallbackProfile.grandetBufferTime,
+      back_to_index: false,
+      ...(response.data.run_order_grandet_mode || {})
+    }
+    product_switching.value = {
+      grandet_mode: true,
+      drone_loss_seconds: 30,
+      waiting_seconds: 2,
+      ...(response.data.product_switching || {})
+    }
     check_mail_enable.value = response.data.check_mail_enable
     report_enable.value = response.data.report_enable
     recruit_gap.value = response.data.recruit_gap
@@ -522,9 +563,11 @@ export const useConfigStore = defineStore('config', () => {
     sf_target.value = response.data.secret_front.target
     touch_method.value = response.data.touch_method
     free_room.value = response.data.free_room
+    experimental_dorm_logic.value = response.data.experimental_dorm_logic ?? false
+    dorm_order.value = response.data.dorm_order ? response.data.dorm_order.split(',') : []
     merge_interval.value = response.data.merge_interval
     fia_fool.value = response.data.fia_fool
-    refresh_backup_plan_after_mood.value = response.data.refresh_backup_plan_after_mood ?? false
+    refresh_backup_plan_after_mood.value = response.data.refresh_backup_plan_after_mood ?? true
     assistant_follows_schedule.value = response.data.assistant_follows_schedule
     enable_mastery.value = response.data.enable_mastery ?? true
     sign_in.value = response.data.sign_in
@@ -565,6 +608,7 @@ export const useConfigStore = defineStore('config', () => {
       enable_party: enable_party.value ? 1 : 0,
       leifeng_mode: leifeng_mode.value ? 1 : 0,
       free_blacklist: free_blacklist.value.join(','),
+      maa_adb_path: maa_adb_path.value,
       maa_enable:
         (stage_plan_enable.value && stage_plan_runner.value === 'maa') ||
         (maa_mall_enable.value && maa_mall_mode.value === 'maa')
@@ -599,8 +643,13 @@ export const useConfigStore = defineStore('config', () => {
       custom_smtp_server: custom_smtp_server.value,
       reload_room: reload_room.value.join(','),
       run_order_delay: run_order_delay.value,
-      low_frame_rate_mode: low_frame_rate_mode.value,
-      dorm_order: dorm_order.value.join(','),
+      low_frame_rate_mode:
+        performance_mode.value === 'auto'
+          ? performanceProfile('auto', runtime_platform.value).lowFrameRateMode
+          : low_frame_rate_mode.value,
+      performance_mode: performance_mode.value,
+      selection_poll_interval: selection_poll_interval.value,
+      selection_transition_timeout: selection_transition_timeout.value,
       start_automatically: start_automatically.value,
       maa_mall_buy: maa_mall_buy.value.join(','),
       maa_mall_blacklist: maa_mall_blacklist.value.join(','),
@@ -608,6 +657,8 @@ export const useConfigStore = defineStore('config', () => {
       simulator: simulator.value,
       ...(runtime_platform.value === 'android' ? {} : { theme: theme.value }),
       resting_threshold: resting_threshold.value / 100,
+      version_update_resting_threshold: version_update_resting_threshold.value / 100,
+      version_update_threshold_advance_hours: version_update_threshold_advance_hours.value,
       fia_threshold: fia_threshold.value / 100,
       rescue_threshold: rescue_threshold.value / 100,
       favorite: favorite.value.join(','),
@@ -653,6 +704,7 @@ export const useConfigStore = defineStore('config', () => {
       recruit_robot: recruit_robot.value,
       recruit_auto_only5: recruit_auto_only5.value,
       run_order_grandet_mode: run_order_grandet_mode.value,
+      product_switching: product_switching.value,
       check_mail_enable: check_mail_enable.value,
       report_enable: report_enable.value,
       recruit_gap: recruit_gap.value,
@@ -669,6 +721,8 @@ export const useConfigStore = defineStore('config', () => {
       },
       touch_method: touch_method.value,
       free_room: free_room.value,
+      experimental_dorm_logic: experimental_dorm_logic.value,
+      dorm_order: dorm_order.value.join(','),
       merge_interval: merge_interval.value,
       fia_fool: fia_fool.value,
       refresh_backup_plan_after_mood: refresh_backup_plan_after_mood.value,
@@ -812,7 +866,10 @@ export const useConfigStore = defineStore('config', () => {
     reload_room,
     run_order_delay,
     low_frame_rate_mode,
-    dorm_order,
+    performance_mode,
+    performance_effective_mode,
+    selection_poll_interval,
+    selection_transition_timeout,
     start_automatically,
     maa_mall_buy,
     maa_mall_blacklist,
@@ -825,6 +882,8 @@ export const useConfigStore = defineStore('config', () => {
     defaultLaunchCommand,
     simulator,
     resting_threshold,
+    version_update_resting_threshold,
+    version_update_threshold_advance_hours,
     fia_threshold,
     rescue_threshold,
     favorite,
@@ -872,6 +931,7 @@ export const useConfigStore = defineStore('config', () => {
     ai_key,
     skland_info,
     run_order_grandet_mode,
+    product_switching,
     check_mail_enable,
     report_enable,
     recruit_gap,
@@ -885,6 +945,8 @@ export const useConfigStore = defineStore('config', () => {
     sf_target,
     touch_method,
     free_room,
+    experimental_dorm_logic,
+    dorm_order,
     merge_interval,
     fia_fool,
     refresh_backup_plan_after_mood,

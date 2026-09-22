@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arknights_mower import __rootdir__, __system__
 from arknights_mower.utils.path import get_path
+from arknights_mower.utils.performance import (
+    PERFORMANCE_PRESETS,
+    default_performance_mode,
+    default_performance_profile,
+)
 
 DEFAULT_LAUNCH_COMMAND = (
     "input keyevent KEYCODE_WAKEUP; "
@@ -409,6 +414,14 @@ class RIICPart(ConfModel):
         back_to_index: bool = False
         "跑单前返回基建首页"
 
+    class ProductSwitchingConf(ConfModel):
+        grandet_mode: bool = True
+        "仅使用不会超过损耗容限的无人机，余下时间自然等待"
+        drone_loss_seconds: int = Field(default=30, ge=0, le=180)
+        "允许额外一架无人机浪费的加速秒数"
+        waiting_seconds: int = Field(default=2, ge=0, le=60)
+        "制造站自然完成当前产物后的额外等待秒数"
+
     class WorkShopSetting(ConfModel):
         items: list[WorkShopItem] = []
         "材料列表"
@@ -419,12 +432,24 @@ class RIICPart(ConfModel):
         source: Literal["manual", "mastery", "stockpile"] = "manual"
         "配置来源；旧配置按手动配置保留"
 
+    performance_mode: Literal["auto", "high", "medium", "low", "custom"] = Field(
+        default_factory=default_performance_mode
+    )
+    "设备性能：自动 / 高 / 中 / 低 / 自定义"
+    selection_poll_interval: float = Field(
+        default_factory=lambda: default_performance_profile().poll_interval,
+        ge=0.1,
+        le=2,
+    )
+    "选人界面稳定帧采样间隔（秒）"
+    selection_transition_timeout: float = Field(default=2.5, ge=1, le=20)
+    "选人界面操作反馈超时（秒）"
     low_frame_rate_mode: bool = Field(
         default_factory=lambda: (
             os.environ.get("MOWER_ANDROID") == "1" or __system__ == "android"
         )
     )
-    "低帧率适配：基建选人等待稳定画面；Android 默认开启"
+    "旧版低帧率适配兼容字段；false 对应高，true 对应中"
     drone_count_limit: int = 100
     "无人机使用阈值"
     drone_room: str = ""
@@ -435,16 +460,66 @@ class RIICPart(ConfModel):
     "宿舍黑名单"
     reload_room: str = ""
     "搓玉补货房间"
-    run_order_delay: float = 3
+    run_order_delay: float = Field(
+        default_factory=lambda: default_performance_profile().run_order_delay
+    )
     "跑单前置延时"
     resting_threshold: float = 0.65
     "心情阈值"
+    version_update_resting_threshold: float = Field(default=0.8, ge=0, le=1)
+    "版本维护心情阈值"
+    version_update_threshold_advance_hours: float = Field(default=12, ge=0, le=168)
+    "版本维护心情阈值提前启用时长（小时）"
     run_order_grandet_mode: RunOrderGrandetModeConf = Field(
         default_factory=RunOrderGrandetModeConf
     )
     "葛朗台跑单"
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_performance_mode(cls, data):
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "performance_mode" not in data:
+            grandet = data.get("run_order_grandet_mode")
+            has_custom_timing = any(
+                field in data
+                for field in (
+                    "screenshot_interval",
+                    "selection_poll_interval",
+                    "selection_transition_timeout",
+                    "run_order_delay",
+                )
+            ) or (isinstance(grandet, dict) and "buffer_time" in grandet)
+            if has_custom_timing:
+                data["performance_mode"] = "custom"
+            elif "low_frame_rate_mode" in data:
+                data["performance_mode"] = (
+                    "medium" if data["low_frame_rate_mode"] else "high"
+                )
+        mode = data.get("performance_mode")
+        if mode in PERFORMANCE_PRESETS:
+            profile = PERFORMANCE_PRESETS[mode]
+            data["low_frame_rate_mode"] = profile.low_frame_rate
+            data["screenshot_interval"] = profile.screenshot_interval
+            data["selection_poll_interval"] = profile.poll_interval
+            data["selection_transition_timeout"] = profile.transition_timeout
+            data["run_order_delay"] = profile.run_order_delay
+            grandet = dict(data.get("run_order_grandet_mode") or {})
+            grandet["buffer_time"] = profile.grandet_buffer_time
+            data["run_order_grandet_mode"] = grandet
+        return data
+
+    product_switching: ProductSwitchingConf = Field(
+        default_factory=ProductSwitchingConf
+    )
+    "葛朗台切产物与订单"
+
     free_room: bool = False
     "宿舍不养闲人模式"
+    experimental_dorm_logic: bool = False
+    "测试宿舍逻辑；关闭时使用稳定版宿舍分配规则"
     fia_fool: bool = True
     "菲亚防呆"
     fia_threshold: float = 0.9
@@ -491,7 +566,7 @@ class RIICPart(ConfModel):
     workshop_protect_t2_device_rock: bool = False
     "禁止加工消耗装置、固源岩（仅 T2），材料预算也排除对应合成配方"
     workshop_low_priority_rest: bool = True
-    "加工干员使用最低宿舍恢复优先级，覆盖床位分配与实际选人"
+    "稳定版加工干员最低宿舍恢复优先级"
     t5_operators: list[str] = ["年"]
     "自动专精 T5 加工干员"
     book_operators: list[str] = ["司霆惊蛰"]
@@ -501,14 +576,16 @@ class RIICPart(ConfModel):
     merge_interval: float = 10
     "不养闲人合并间隔"
     dorm_order: str = ""
-    "宿舍优先级"
-    refresh_backup_plan_after_mood: bool = False
-    "缓存清零重启后读取心情并按载入心情数据模式重启"
+    "稳定版全局宿舍优先级"
+    refresh_backup_plan_after_mood: bool = True
+    "缓存清零重启后读取心情并按载入心情数据模式重启，默认开启"
     assistant_follows_schedule: bool = False
     "协助位跟随排班（专精时协助位不固定，由排班系统管理）"
     enable_mastery: bool = True
     "全自动专精全局开关：OFF 时禁用全部训练室动作/通知/守卫，仅保留仓库材料扫描"
-    # 中枢加成（0/5）与换人缓冲时间已迁到路线配置全局设置行（#91 修订），不再存 conf
+
+    # 中枢加成（0/5）与换人缓冲时间已迁到路线配置全局设置行（见 mastery-route.json），
+    # 不再存 conf
 
 
 class SimulatorPart(ConfModel):

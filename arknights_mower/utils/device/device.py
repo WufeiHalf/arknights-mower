@@ -260,7 +260,7 @@ class Device:
     def is_app_running_in_background(self) -> bool:
         """检查游戏进程是否存活；无法判定时按「运行中」处理，避免误判重新拉起游戏。"""
         try:
-            # 同一条持久 adb 会话查询，避免另起 adb.exe 进程的竞态假阴性（#159 根因）
+            # 同一条持久 adb 会话查询，避免另起 adb.exe 进程的竞态假阴性（根因）
             output = self.run(f"ps -A | grep {config.conf.APPNAME} | grep -v grep")
             if output.strip():
                 return True
@@ -426,10 +426,15 @@ class Device:
         return False
 
     def screencap(self) -> bytes:
+        from arknights_mower.utils.performance import effective_performance_profile
+
         start_time = datetime.now()
-        min_time = config.screenshot_time + timedelta(
-            milliseconds=config.conf.screenshot_interval
-        )
+        screenshot_interval = config.conf.screenshot_interval
+        if getattr(config.conf, "performance_mode", None) == "auto":
+            screenshot_interval = effective_performance_profile(
+                config.conf, config.screenshot_avg, config.screenshot_count
+            ).screenshot_interval
+        min_time = config.screenshot_time + timedelta(milliseconds=screenshot_interval)
         delta = (min_time - start_time).total_seconds()
         if delta > 0:
             time.sleep(delta)
