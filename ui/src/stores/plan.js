@@ -6,10 +6,13 @@ import { factory_product_ids } from '@/utils/base_products'
 
 export const usePlanStore = defineStore('plan', () => {
   const ling_xi = ref(1)
+  const mood_limits = ref(null)
+  const operator_mood_limits = ref({})
   const exhaust_require = ref([])
   const rest_in_full = ref([])
   const ope_resting_priority = ref([])
-  const dorm_order = ref([])
+  const default_dorm_order = ['dormitory_1', 'dormitory_2', 'dormitory_3', 'dormitory_4']
+  const dorm_order = ref([...default_dorm_order])
   const resting_priority = ref([])
   const resting_standby = ref([])
   const workaholic = ref([])
@@ -52,6 +55,29 @@ export const usePlanStore = defineStore('plan', () => {
 
   function str2list(data) {
     return data && data != '' ? data.split(',') : []
+  }
+
+  function normalizeDormOrder(data) {
+    const result = []
+    for (const value of str2list(data)) {
+      const match = value.match(/^(dormitory_[1-4])(?:_\d+)?$/)
+      const room = match?.[1]
+      if (room && !result.includes(room)) result.push(room)
+    }
+    return result.concat(default_dorm_order.filter((room) => !result.includes(room)))
+  }
+
+  function normalizeBackupDormOrder(conf) {
+    const raw = conf.dorm_order
+    const normalized = raw ? normalizeDormOrder(raw) : []
+    const hasOverride =
+      Object.prototype.hasOwnProperty.call(conf, 'dorm_order_override') &&
+      conf.dorm_order_override != null
+    const override = hasOverride
+      ? Boolean(conf.dorm_order_override)
+      : normalized.length > 0 && normalized.join(',') !== default_dorm_order.join(',')
+    conf.dorm_order_override = override
+    return override ? normalized : []
   }
 
   const backup_conf_convert_list = [
@@ -139,10 +165,12 @@ export const usePlanStore = defineStore('plan', () => {
   async function load_plan() {
     const response = await axios.get(`${import.meta.env.VITE_HTTP_URL}/plan`)
     ling_xi.value = response.data.conf.ling_xi
+    mood_limits.value = response.data.conf.mood_limits ?? null
+    operator_mood_limits.value = response.data.conf.operator_mood_limits ?? {}
     exhaust_require.value = str2list(response.data.conf.exhaust_require)
     rest_in_full.value = str2list(response.data.conf.rest_in_full)
     ope_resting_priority.value = str2list(response.data.conf.ope_resting_priority)
-    dorm_order.value = str2list(response.data.conf.dorm_order)
+    dorm_order.value = normalizeDormOrder(response.data.conf.dorm_order)
     resting_priority.value = str2list(response.data.conf.resting_priority)
     resting_standby.value = str2list(response.data.conf.resting_standby)
     workaholic.value = str2list(response.data.conf.workaholic)
@@ -165,8 +193,13 @@ export const usePlanStore = defineStore('plan', () => {
 
     backup_plans.value = response.data.backup_plans ?? []
     for (let b of backup_plans.value) {
+      b.conf.mood_limits ??= null
+      b.conf.operator_mood_limits ??= {}
+      if (!Object.prototype.hasOwnProperty.call(b, 'exit_trigger_timing')) {
+        b.exit_trigger_timing = null
+      }
       for (const i of backup_conf_convert_list) {
-        b.conf[i] = str2list(b.conf[i])
+        b.conf[i] = i === 'dorm_order' ? normalizeBackupDormOrder(b.conf) : str2list(b.conf[i])
       }
       b.plan = fill_empty(b.plan)
     }
@@ -190,6 +223,8 @@ export const usePlanStore = defineStore('plan', () => {
       plan1: strip_plan(plan.value),
       conf: {
         ling_xi: ling_xi.value,
+        mood_limits: deepcopy(mood_limits.value),
+        operator_mood_limits: deepcopy(operator_mood_limits.value),
         exhaust_require: list2str(exhaust_require.value),
         rest_in_full: list2str(rest_in_full.value),
         ope_resting_priority: list2str(ope_resting_priority.value),
@@ -277,6 +312,8 @@ export const usePlanStore = defineStore('plan', () => {
     load_plan,
     load_operators,
     ling_xi,
+    mood_limits,
+    operator_mood_limits,
     exhaust_require,
     rest_in_full,
     resting_priority,

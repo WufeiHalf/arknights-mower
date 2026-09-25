@@ -8,7 +8,7 @@ import time
 from functools import wraps
 from io import BytesIO
 from pathlib import Path
-from threading import RLock, Thread
+from threading import RLock, Thread, Timer
 from uuid import uuid4
 from zlib import error as ZlibError
 
@@ -44,10 +44,12 @@ from arknights_mower.views.network import network_bp
 from arknights_mower.views.process_control import process_control_bp
 from arknights_mower.views.software_update import software_update_bp
 from arknights_mower.views.task import set_mower_thread, task_bp
+from arknights_mower.views.ui_state import ui_state_bp
 
 mimetypes.add_type("text/html", ".html")
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("image/webp", ".webp")
 
 app = Flask(__name__, static_folder="ui/dist", static_url_path="")
 app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 25}
@@ -71,6 +73,47 @@ if token := config.conf.webview.token:
 
 mower_thread = None
 log_stream = LogStream()
+scheduled_start_lock = RLock()
+scheduled_start_timer = None
+scheduled_start_at = None
+
+
+def _cancel_scheduled_start():
+    global scheduled_start_timer, scheduled_start_at
+    with scheduled_start_lock:
+        if scheduled_start_timer is not None:
+            scheduled_start_timer.cancel()
+        scheduled_start_timer = None
+        scheduled_start_at = None
+
+
+def _run_scheduled_start(timer):
+    global scheduled_start_timer, scheduled_start_at
+    with backup_lock:
+        with scheduled_start_lock:
+            if scheduled_start_timer is not timer:
+                return
+            scheduled_start_timer = None
+            scheduled_start_at = None
+        if _start_mower("2"):
+            logger.info("预约时间已到，Mower 开始执行")
+        else:
+            logger.warning("预约时间已到，但 Mower 当前无法启动")
+
+
+def _schedule_start(delay_seconds):
+    global scheduled_start_timer, scheduled_start_at
+    with scheduled_start_lock:
+        if scheduled_start_timer is not None:
+            scheduled_start_timer.cancel()
+        scheduled_start_at = datetime.datetime.now().astimezone() + datetime.timedelta(
+            seconds=delay_seconds
+        )
+        timer = Timer(delay_seconds, lambda: _run_scheduled_start(timer))
+        timer.daemon = True
+        scheduled_start_timer = timer
+        timer.start()
+        return scheduled_start_at.isoformat()
 
 
 def _mower_busy_response():
@@ -521,15 +564,20 @@ def require_token(f):
 @app.before_request
 def serialize_configuration_requests():
     # Export/restore must not interleave with form saves, plan edits or startup.
-    if request.path in {
-        "/conf",
-        "/plan",
-        "/import",
-        "/sss-copilot",
-        "/network/settings",
-        "/software-update/settings",
-    } or request.path.startswith(
-        ("/config-backup/", "/weekly-plans", "/mastery-", "/workshop-", "/start/")
+    if (
+        request.path
+        in {
+            "/conf",
+            "/plan",
+            "/import",
+            "/sss-copilot",
+            "/network/settings",
+            "/software-update/settings",
+        }
+        or request.path.startswith(
+            ("/config-backup/", "/weekly-plans", "/mastery-", "/workshop-", "/start/")
+        )
+        or request.path == "/scheduled-start"
     ):
         backup_lock.acquire()
         g.configuration_locked = True
@@ -847,6 +895,20 @@ def read_depot():
     return {"depot": data, "cultivate_ok": cultivate_ok, "cultivate_msg": cultivate_msg}
 
 
+@app.route("/depot/history")
+def depot_history():
+    """仓库快照序列，供仓库页做环比与趋势。
+
+    取多少条由设置里的"仓库历史条数"决定（默认 3000）：请求参数只能在此之内再往下收，
+    参数缺失或写坏都按设置走，所以页面自己不用知道这个数。完整库存快照每条约 2.4KB，
+    3000 条约 7MB，觉得重就在设置里调小。数据源是 depotresult.csv 与 depotmerged.csv，
+    为空/损坏时返回空数组而不是报错——趋势是锦上添花，不该让仓库页整体进错误态。
+    """
+    from arknights_mower.utils import depot
+
+    return {"snapshots": depot.读取仓库历史(depot.历史条数(request.args.get("limit")))}
+
+
 @app.route("/stage/latest-activity")
 def stage_latest_activity():
     """刷理智周计划：最近开启活动（stage_data_full 热更后最新）的选中关。
@@ -907,10 +969,13 @@ def stage_inventory_rules():
 
 @app.route("/status")
 def get_status():
+    with scheduled_start_lock:
+        start_at = scheduled_start_at.isoformat() if scheduled_start_at else None
     response = {
         "auto_start_handled": bool(os.environ.get("MOWER_RESTART_JOB")),
         "plan_condition": [],
         "status": "stopped",
+        "scheduled_start_at": start_at,
         "next_task_time": None,
         "remaining_seconds": None,
     }
@@ -943,10 +1008,14 @@ def get_status():
 @app.route("/start/<start_type>")
 @require_token
 def start(start_type):
+    return str(_start_mower(start_type)).lower()
+
+
+def _start_mower(start_type):
     global mower_thread
 
     if active_job():
-        return "false"
+        return False
 
     with maa_maintenance_lock:
         if (
@@ -956,7 +1025,7 @@ def start(start_type):
             or _job_running(maa_resource_update_job)
             or resource_update.running()
         ):
-            return "false"
+            return False
         # 创建 tmp 文件夹
         tmp_dir = get_path("@app/tmp")
         tmp_dir.mkdir(exist_ok=True)
@@ -980,8 +1049,33 @@ def start(start_type):
         set_mower_thread(mower_thread)
         log_stream.clear()
         mower_thread.start()
+        _cancel_scheduled_start()
 
-        return "true"
+        return True
+
+
+@app.route("/scheduled-start", methods=["PUT", "DELETE"])
+@require_token
+def scheduled_start():
+    if request.method == "DELETE":
+        _cancel_scheduled_start()
+        logger.info("已取消预约启动")
+        return {"scheduled_start_at": None}
+
+    payload = request.get_json(silent=True) or {}
+    delay_seconds = payload.get("delay_seconds")
+    if (
+        isinstance(delay_seconds, bool)
+        or not isinstance(delay_seconds, (int, float))
+        or not 0 < delay_seconds <= 30 * 24 * 3600
+    ):
+        return {"error": "预约时间必须在未来 30 天内"}, 400
+    with maa_maintenance_lock:
+        if mower_thread and mower_thread.is_alive():
+            return {"error": "Mower 正在运行"}, 409
+        start_at = _schedule_start(delay_seconds)
+    logger.info(f"已预约在 {start_at} 启动 Mower")
+    return {"scheduled_start_at": start_at}
 
 
 @app.route("/stop")
@@ -1877,6 +1971,26 @@ def get_mood_ratios():
     return record.get_mood_ratios()
 
 
+@app.route("/record/mood-available-operators")
+@require_token
+def get_mood_available_operators():
+    from arknights_mower.solvers.mood_history_query import available_mood_operators
+
+    return available_mood_operators(get_path("@app/tmp") / "data.db")
+
+
+@app.route("/record/mood-series")
+@require_token
+def get_selected_mood_series():
+    from arknights_mower.solvers.mood_history_query import selected_mood_series
+
+    try:
+        names = json.loads(request.args.get("names", "[]"))
+        return selected_mood_series(get_path("@app/tmp") / "data.db", names)
+    except (ValueError, TypeError) as exc:
+        return {"error": str(exc)}, 400
+
+
 @app.route("/report/restore-trading-history")
 def restoreTradingHistory():
     from arknights_mower.utils.trading_order import TradingOrder
@@ -2564,3 +2678,4 @@ app.config["CONFIG_BACKUP_BUSY"] = lambda: bool(
     or resource_update.running()
 )
 app.register_blueprint(process_control_bp)
+app.register_blueprint(ui_state_bp)

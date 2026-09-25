@@ -2,12 +2,27 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
+
+
+class MoodLimits(BaseModel):
+    lower: float = Field(default=0, ge=0, lt=24, allow_inf_nan=False)
+    upper: float = Field(default=24, gt=0, le=24, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.lower >= self.upper:
+            raise ValueError("心情下限必须小于上限")
+        return self
 
 
 class PlanConf(BaseModel):
     ling_xi: int = 1
     "令夕模式，1感知 2烟火 3均衡"
+    mood_limits: Optional[MoodLimits] = None
+    "全体干员自定义心情上下限；空值沿用自动规则"
+    operator_mood_limits: dict[str, MoodLimits] = Field(default_factory=dict)
+    "指定干员上下限，优先于全体设置"
     exhaust_require: str = ""
     "耗尽"
     rest_in_full: str = ""
@@ -15,7 +30,7 @@ class PlanConf(BaseModel):
     resting_priority: str = ""
     "低优先级"
     resting_standby: str = ""
-    "宿舍休息候补干员，仅对主班绑组干员生效"
+    "宿舍休息候补干员"
     workaholic: str = ""
     "0心情工作（主力宿舍黑名单）"
     refresh_trading: str = ""
@@ -25,12 +40,14 @@ class PlanConf(BaseModel):
     ope_resting_priority: str = ""
     "休息排序优先级"
     dorm_order: str = ""
-    "当前排班的宿舍床位优先级"
+    "测试宿舍逻辑下当前排班的宿舍房间优先级"
 
 
 class BackupPlanConf(PlanConf):
     free_blacklist: str = ""
     "（非主力）宿舍黑名单"
+    dorm_order_override: Optional[bool] = None
+    "是否由该副表显式覆盖此前生效的宿舍房间优先级"
 
 
 class Plans(BaseModel):
@@ -121,6 +138,8 @@ class BackupPlan(BaseModel):
     task: Task = {}
     trigger: Trigger = {}
     trigger_timing: str = "AFTER_PLANNING"
+    # 空值表示始终跟随切入时机，兼容旧排班且允许之后修改切入时机。
+    exit_trigger_timing: Optional[str] = None
     name: str = "plan"
 
 
@@ -143,26 +162,54 @@ def parse_plan_document(data) -> PlanModel:
 def migrate_legacy_dorm_order(
     plan: PlanModel, data: dict, legacy_dorm_order: str
 ) -> bool:
-    """Copy the former global bed order into schedule configs that predate it.
+    """迁移全局旧床位顺序，并折叠为每张排班独立的房间顺序。
 
-    Existing schedules used one global order for the main plan and every backup plan.
-    Copying it into every missing config preserves that behaviour on upgrade while making
-    each copied value independently editable afterwards.  An explicitly present empty
-    value is never overwritten.
+    主表缺少独立字段时继承旧全局值；副表只迁移显式的非默认顺序。
+    历史版本自动写入副表的 1→2→3→4 视为未覆盖，避免后续副表把
+    前一张副表的自定义顺序冲回默认值。
     """
-    if not legacy_dorm_order:
-        return False
+    rooms = [f"dormitory_{index}" for index in range(1, 5)]
+
+    def room_order(value: str) -> str:
+        result = []
+        for item in (value or "").split(","):
+            parts = item.rsplit("_", 1)
+            room = (
+                parts[0]
+                if len(parts) == 2 and parts[0] in rooms and parts[1].isdigit()
+                else item
+            )
+            if room in rooms and room not in result:
+                result.append(room)
+        result.extend(room for room in rooms if room not in result)
+        return ",".join(result)
+
     changed = False
     main_conf = data.get("conf")
     if not isinstance(main_conf, dict) or "dorm_order" not in main_conf:
         plan.conf.dorm_order = legacy_dorm_order
+        changed = True
+    normalized = room_order(plan.conf.dorm_order)
+    if plan.conf.dorm_order != normalized:
+        plan.conf.dorm_order = normalized
         changed = True
     raw_backups = data.get("backup_plans")
     if not isinstance(raw_backups, list):
         raw_backups = []
     for index, backup in enumerate(plan.backup_plans):
         raw_conf = raw_backups[index].get("conf") if index < len(raw_backups) else None
-        if not isinstance(raw_conf, dict) or "dorm_order" not in raw_conf:
-            backup.conf.dorm_order = legacy_dorm_order
+        raw_conf = raw_conf if isinstance(raw_conf, dict) else {}
+        raw_order = str(raw_conf.get("dorm_order", "") or "")
+        normalized = room_order(raw_order) if raw_order else ""
+        explicit = raw_conf.get("dorm_order_override")
+        if explicit is None:
+            explicit = bool(normalized and normalized != ",".join(rooms))
+        explicit = bool(explicit)
+        desired_order = normalized if explicit else ""
+        if backup.conf.dorm_order != desired_order:
+            backup.conf.dorm_order = desired_order
+            changed = True
+        if backup.conf.dorm_order_override != explicit:
+            backup.conf.dorm_order_override = explicit
             changed = True
     return changed

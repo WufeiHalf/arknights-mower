@@ -43,6 +43,7 @@ kernel = np.ones((12, 12), np.uint8)
 PREFIX_NAME_SCORE_RATIO = 0.9
 PREFIX_NAME_WIDTH_RATIO = 0.75
 PREFIX_NAME_WIDTH_MARGIN = 30
+OPERATOR_ROOM_MIN_SCORE = 0.70
 
 
 class AgentSelectionNotReady(RuntimeError):
@@ -888,7 +889,16 @@ class BaseMixin:
             return 24
 
     def detect_product_complete(self):
-        for product in ["gold", "exp", "lmd", "ori", "oru", "trust"]:
+        for product in [
+            "gold",
+            "exp",
+            "lmd",
+            "ori",
+            "oru",
+            "trust",
+            "credit",
+            "info",
+        ]:
             if pos := self.find(
                 f"infra_{product}_complete",
                 scope=((1230, 0), (1920, 1080)),
@@ -896,16 +906,36 @@ class BaseMixin:
             ):
                 return pos
 
+    def wait_product_complete(self, max_retries: int = 5) -> bool:
+        """等待产物收取提示浮动动画结束并消失，避免遮挡后续 UI。
+
+        :param max_retries: 最多等待轮数（每轮 1 秒），防止低阈值误判导致死循环。
+        :return: 若提示消失返回 True，若达到最大重试次数仍未消失返回 False。
+        """
+        for _ in range(max_retries):
+            if not self.detect_product_complete():
+                return True
+            logger.info("检测到产物收取提示，等待消失")
+            self.sleep(1)
+        if self.detect_product_complete():
+            logger.warning("产物收取提示等待超时，继续执行后续流程")
+            return False
+        return True
+
     def read_operator_in_room(self, img):
         img = thres2(img, 200)
         img = cv2.copyMakeBorder(img, 10, 10, 10, 10, cv2.BORDER_CONSTANT, None, (0,))
         dilation = cv2.dilate(img, kernel, iterations=1)
         contours, _ = cv2.findContours(dilation, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         rect = [cv2.boundingRect(c) for c in contours]
+        if not rect:
+            return ""
         x0 = min(x for x, y, w, h in rect)
         y0 = min(y for x, y, w, h in rect)
         x1 = max(x + w for x, y, w, h in rect)
         y1 = max(y + h for x, y, w, h in rect)
+        if (x1 - x0) < 20:
+            return ""
         img = img[y0:y1, x0:x1]
         tpl = np.zeros((46, 265), dtype=np.uint8)
         h = min(img.shape[0], tpl.shape[0])
@@ -923,6 +953,11 @@ class BaseMixin:
             if max_val > max_score:
                 max_score = max_val
                 best_operator = operator
+        if max_score < OPERATOR_ROOM_MIN_SCORE:
+            logger.debug(
+                f"房间干员识别置信度过低 ({best_operator}: {max_score:.3f} < {OPERATOR_ROOM_MIN_SCORE})，判定为未识别"
+            )
+            return ""
         return _resolve_operator_room_prefix(
             best_operator, max_score, scores, sample_width
         )
@@ -932,7 +967,6 @@ class BaseMixin:
         if cord is not None:
             img = cropimg(img, cord)
         if type == "name":
-            img = cropimg(img, ((169, 22), (513, 80)))
             return self.read_operator_in_room(img)
         try:
             ret = rapidocr.engine(img, use_det=False, use_cls=False, use_rec=True)[0]
