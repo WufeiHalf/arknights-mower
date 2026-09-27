@@ -18,6 +18,7 @@ RUNTIME_API = 1
 ROOTS = (
     "arknights_mower",
     "ui/dist",
+    "ui/src/pages/basement_skill/skill.json",
     "server.py",
     "LICENSE",
     "CHANGELOG.md",
@@ -28,6 +29,7 @@ REQUIRED = (
     "arknights_mower/__init__.py",
     "arknights_mower/data/version.json",
     "ui/dist/index.html",
+    "ui/src/pages/basement_skill/skill.json",
     "server.py",
     "LICENSE",
     "requirements.txt",
@@ -38,7 +40,7 @@ REQUIRED = (
 def package(
     root: Path, output: Path, version: str, revision: str, runtime: Path | None = None
 ) -> Path:
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-alpha\.\d+)?", version):
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-alpha\.\d+(?:\.g[0-9a-f]{8})?)?", version):
         raise ValueError("invalid release version")
     if not re.fullmatch(r"[a-f0-9]{40}", revision):
         raise ValueError("invalid commit revision")

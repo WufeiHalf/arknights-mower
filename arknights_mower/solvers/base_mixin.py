@@ -19,6 +19,7 @@ from arknights_mower.utils.performance import (
     PERFORMANCE_PRESETS,
     default_performance_profile,
     effective_performance_profile,
+    is_android_runtime,
 )
 from arknights_mower.utils.resource_pkg import (
     register_resource_reload,
@@ -158,11 +159,14 @@ class BaseMixin:
         # Compatibility for integrations that still change only the former
         # boolean. In AUTO, only a deviation from the platform baseline is an
         # explicit legacy override; the baseline itself remains adaptive.
-        if config.conf.performance_mode == "auto":
+        if not is_android_runtime() and config.conf.performance_mode == "auto":
             legacy_enabled = config.conf.low_frame_rate_mode
             if legacy_enabled != default_performance_profile().low_frame_rate:
                 return PERFORMANCE_PRESETS["medium" if legacy_enabled else "high"]
-        elif config.conf.performance_mode in PERFORMANCE_PRESETS:
+        elif (
+            not is_android_runtime()
+            and config.conf.performance_mode in PERFORMANCE_PRESETS
+        ):
             legacy_enabled = config.conf.low_frame_rate_mode
             if legacy_enabled != profile.low_frame_rate:
                 return PERFORMANCE_PRESETS["medium" if legacy_enabled else "high"]
@@ -746,7 +750,9 @@ class BaseMixin:
             logger.debug(f"{colored_room}B{digit_1}0{digit_2}")
             return f"room_{digit_1}_{digit_2}"
         elif colored_room == "训练室":
-            logger.debug("训练室B305")
+            logger.debug(
+                "训练室B205" if config.conf.swap_contact_train else "训练室B305"
+            )
             return "train"
         elif colored_room == "加工站":
             logger.debug("加工站B105")
@@ -772,7 +778,9 @@ class BaseMixin:
         elif room == "meeting":
             logger.debug("会客室1F02")
         else:
-            logger.debug("办公室B205")
+            logger.debug(
+                "办公室B305" if config.conf.swap_contact_train else "办公室B205"
+            )
         return room
 
     def adjust_room(self, _room):
@@ -820,10 +828,10 @@ class BaseMixin:
         return None
 
     @timed_step("enter_room")
-    def enter_room(self, room):
+    def enter_room(self, room, *, max_attempts=3):
         """从基建首页进入房间"""
 
-        for enter_times in range(3):
+        for enter_times in range(max_attempts):
             pending = False
             actions = 0
             for retry_times in range(9):
@@ -838,7 +846,11 @@ class BaseMixin:
                     if actions >= 5:
                         break
                     actions += 1
-                    _room = segment.base(self.recog.img, pos)[room]
+                    _room = segment.base(
+                        self.recog.img,
+                        pos,
+                        swap_contact_train=config.conf.swap_contact_train,
+                    )[room]
                     logger.debug(
                         f"进入房间 {room}，第{enter_times + 1}轮第{retry_times + 1}次尝试"
                     )
@@ -857,11 +869,11 @@ class BaseMixin:
                 and self.detect_room() == room
             ):
                 return
-            if enter_times < 2:
+            if enter_times < max_attempts - 1:
                 # 仍停在全局视角时，原逻辑会一直点击同一位置；退出基建
                 # 再重新进入，重新定位房间。此处不重启或关闭游戏。
                 logger.warning(
-                    f"未确认进入房间 {room}，返回首页后重新定位（{enter_times + 1}/2）"
+                    f"未确认进入房间 {room}，返回首页后重新定位（{enter_times + 1}/{max_attempts - 1}）"
                 )
                 self.back_to_index()
                 self.back_to_infrastructure()

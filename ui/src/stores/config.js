@@ -11,6 +11,7 @@ export const useConfigStore = defineStore('config', () => {
   const adb = ref('')
   const drone_count_limit = ref(0)
   const drone_room = ref('')
+  const swap_contact_train = ref(false)
   const drone_interval = ref(4)
   const enable_party = ref(true)
   const leifeng_mode = ref(true)
@@ -121,6 +122,7 @@ export const useConfigStore = defineStore('config', () => {
   const rogue = ref({})
   const sss = ref({})
   const screenshot = ref(1)
+  const screenshot_archive_limit_mb = ref(5120)
   const screenshot_interval = ref(500)
   const mail_subject = ref('')
   const ai_type = ref('')
@@ -160,8 +162,8 @@ export const useConfigStore = defineStore('config', () => {
   const visit_friend_mode = ref('maa')
   const credit_fight = ref({})
   const custom_screenshot = ref({})
-  const hot_update_enable = ref(false)
-  const hot_update_auto_update = ref(false)
+  const resource_update_enable = ref(false)
+  const resource_update_auto_update = ref(false)
   const notification_level = ref('INFO')
   const waiting_scene = ref({})
   const expiring_medicine_on_weekend = ref(false)
@@ -532,6 +534,7 @@ export const useConfigStore = defineStore('config', () => {
     rogue.value = response.data.rogue
     sss.value = response.data.sss
     screenshot.value = response.data.screenshot
+    screenshot_archive_limit_mb.value = response.data.screenshot_archive_limit_mb ?? 5120
     screenshot_interval.value =
       response.data.screenshot_interval ?? fallbackProfile.screenshotInterval
     mail_subject.value = response.data.mail_subject
@@ -577,6 +580,7 @@ export const useConfigStore = defineStore('config', () => {
     refresh_backup_plan_after_mood.value = response.data.refresh_backup_plan_after_mood ?? true
     assistant_follows_schedule.value = response.data.assistant_follows_schedule
     enable_mastery.value = response.data.enable_mastery ?? true
+    swap_contact_train.value = response.data.swap_contact_train ?? false
     sign_in.value = response.data.sign_in
     droidcast.value = response.data.droidcast
     mumu12IPC.value = response.data.mumu12IPC
@@ -592,8 +596,8 @@ export const useConfigStore = defineStore('config', () => {
     fodder_operators.value = response.data.fodder_operators || ['九色鹿']
     t5_operators.value = response.data.t5_operators || ['年']
     book_operators.value = response.data.book_operators || ['司霆惊蛰']
-    hot_update_enable.value = response.data.hot_update?.enable ?? false
-    hot_update_auto_update.value = response.data.hot_update?.auto_update ?? false
+    resource_update_enable.value = response.data.resource_update?.enable ?? false
+    resource_update_auto_update.value = response.data.resource_update?.auto_update ?? false
     notification_level.value = response.data.notification_level
     waiting_scene.value = response.data.waiting_scene
     expiring_medicine_on_weekend.value = response.data.expiring_medicine_on_weekend
@@ -611,6 +615,7 @@ export const useConfigStore = defineStore('config', () => {
       adb: adb.value,
       drone_count_limit: drone_count_limit.value,
       drone_room: drone_room.value,
+      swap_contact_train: swap_contact_train.value,
       drone_interval: drone_interval.value,
       enable_party: enable_party.value ? 1 : 0,
       leifeng_mode: leifeng_mode.value ? 1 : 0,
@@ -702,6 +707,7 @@ export const useConfigStore = defineStore('config', () => {
       rogue: rogue.value,
       sss: sss.value,
       ...(runtime_platform.value === 'android' ? {} : { screenshot: screenshot.value }),
+      screenshot_archive_limit_mb: screenshot_archive_limit_mb.value,
       screenshot_interval: screenshot_interval.value,
       mail_subject: mail_subject.value,
       skland_enable: skland_enable.value,
@@ -753,9 +759,9 @@ export const useConfigStore = defineStore('config', () => {
       fodder_operators: fodder_operators.value,
       t5_operators: t5_operators.value,
       book_operators: book_operators.value,
-      hot_update: {
-        enable: hot_update_enable.value,
-        auto_update: hot_update_auto_update.value
+      resource_update: {
+        enable: resource_update_enable.value,
+        auto_update: resource_update_auto_update.value
       },
       notification_level: notification_level.value,
       waiting_scene: waiting_scene.value,
@@ -765,6 +771,30 @@ export const useConfigStore = defineStore('config', () => {
       maa_orundum: maa_orundum.value,
       maa_mining: maa_mining.value,
       maa_specialaccess: maa_specialaccess.value
+    }
+  }
+
+  function build_advanced_settings() {
+    return {
+      product_switching: product_switching.value,
+      drone_count_limit: drone_count_limit.value,
+      drone_interval: drone_interval.value,
+      reload_room: Array.isArray(reload_room.value)
+        ? reload_room.value.join(',')
+        : reload_room.value,
+      resting_threshold: resting_threshold.value / 100,
+      version_update_resting_threshold: version_update_resting_threshold.value / 100,
+      version_update_threshold_advance_hours: version_update_threshold_advance_hours.value,
+      free_room: free_room.value,
+      experimental_dorm_logic: experimental_dorm_logic.value,
+      dorm_order: Array.isArray(dorm_order.value) ? dorm_order.value.join(',') : dorm_order.value,
+      merge_interval: merge_interval.value,
+      fia_fool: fia_fool.value,
+      refresh_backup_plan_after_mood: refresh_backup_plan_after_mood.value,
+      assistant_follows_schedule: assistant_follows_schedule.value,
+      fia_threshold: fia_threshold.value / 100,
+      rescue_threshold: rescue_threshold.value / 100,
+      favorite: Array.isArray(favorite.value) ? favorite.value.join(',') : favorite.value
     }
   }
 
@@ -833,6 +863,7 @@ export const useConfigStore = defineStore('config', () => {
     save_config,
     drone_count_limit,
     drone_room,
+    swap_contact_train,
     drone_interval,
     enable_party,
     leifeng_mode,
@@ -888,6 +919,7 @@ export const useConfigStore = defineStore('config', () => {
     item_list,
     maa_gap,
     build_config,
+    build_advanced_settings,
     defaultLaunchCommand,
     simulator,
     resting_threshold,
@@ -931,6 +963,7 @@ export const useConfigStore = defineStore('config', () => {
     rogue,
     sss,
     screenshot,
+    screenshot_archive_limit_mb,
     screenshot_interval,
     mail_subject,
     recruit_enable,
@@ -970,8 +1003,8 @@ export const useConfigStore = defineStore('config', () => {
     visit_friend_mode,
     credit_fight,
     custom_screenshot,
-    hot_update_enable,
-    hot_update_auto_update,
+    resource_update_enable,
+    resource_update_auto_update,
     notification_level,
     waiting_scene,
     expiring_medicine_on_weekend,

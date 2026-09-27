@@ -200,15 +200,15 @@
                     专精
                   </div>
                 </n-tab>
-                <n-tab name="报表" @click="showModal = true">
+                <n-tab name="数据图表" @click="showModal = true">
                   <div style="display: flex; flex-direction: column; align-items: center">
                     <n-icon size="20" style="margin-bottom: -1px" :component="StatsChart" />
-                    报表
+                    图表
                   </div>
                   <n-modal v-model:show="showModal">
                     <n-card
                       style="width: 300px"
-                      title="基建报表"
+                      title="数据图表"
                       :bordered="false"
                       size="huge"
                       role="dialog"
@@ -239,6 +239,13 @@
                           @click=";((showModal = false), $router.push('/record/trading_analysis'))"
                         >
                           贸易订单分析
+                        </n-button>
+                      </div>
+                      <div>
+                        <n-button
+                          @click=";((showModal = false), $router.push('/record/log-schedule'))"
+                        >
+                          日志调度
                         </n-button>
                       </div>
                     </n-card>
@@ -435,6 +442,12 @@ const menuOptions = [
           ),
         icon: renderIcon(Newspaper),
         key: 'go-to-trading-analysis'
+      },
+      {
+        label: () =>
+          h(RouterLink, { to: { path: '/record/log-schedule' } }, { default: () => '日志调度' }),
+        icon: renderIcon(ReaderOutline),
+        key: 'go-to-log-schedule'
       }
     ]
   },
@@ -511,8 +524,8 @@ const watermarkData = ref('mower')
 const config_store = useConfigStore()
 const { load_config, load_shop, load_item } = config_store
 const {
-  hot_update_enable,
-  hot_update_auto_update,
+  resource_update_enable,
+  resource_update_auto_update,
   simulator,
   start_automatically,
   theme,
@@ -589,6 +602,7 @@ const adbPort = computed(() => {
 })
 
 const plan_store = usePlanStore()
+plan_store.set_advanced_settings_source(() => config_store.build_advanced_settings())
 const { operators } = storeToRefs(plan_store)
 const { load_plan, load_operators } = plan_store
 
@@ -848,9 +862,9 @@ onMounted(async () => {
         await Promise.all([load_shop(), load_item(), load_operators()])
       }
       await loadResourceVersionLocal()
-      if (hot_update_enable.value) {
+      if (resource_update_enable.value) {
         const resourceInfo = await loadResourceVersion()
-        if (hot_update_auto_update.value && resourceInfo.update_available === true) {
+        if (resource_update_auto_update.value && resourceInfo.update_available === true) {
           if (await installResource()) {
             await Promise.all([load_shop(), load_item(), load_operators()])
           }

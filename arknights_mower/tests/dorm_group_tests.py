@@ -640,7 +640,9 @@ def test_explicit_free_correction_can_remove_fixed_resident(solver):
 
     solver.preserve_resting_crafters(agents, "dormitory_1")
 
-    assert agents[0] == "Free"
+    # 显式组下班仍应移走固定宿管；有满心情替班可用时补齐，不制造空床。
+    assert agents[0] in {"陈", "初雪", "红", "黑角"}
+    assert agents[1:] == ["冰酿", "泥岩", "能天使", "年"]
 
 
 def test_explicit_free_resident_slot_reduces_required_free_beds(solver):
@@ -712,6 +714,7 @@ def test_closing_bed_keeps_existing_single_recovery_target(solver):
     target = data.operators["年"]
     target.mood = 23
     target.dorm_recovery_room = "dormitory_1"
+    target.dorm_recovery_index = target.current_index
     target.dorm_recovery_fixed = ("塑心",)
     plan = {
         "meeting": ["伊内丝", "银灰"],

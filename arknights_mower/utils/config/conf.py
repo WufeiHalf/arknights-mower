@@ -12,6 +12,7 @@ from arknights_mower.utils.performance import (
     PERFORMANCE_PRESETS,
     default_performance_mode,
     default_performance_profile,
+    is_android_runtime,
 )
 
 DEFAULT_LAUNCH_COMMAND = (
@@ -139,7 +140,9 @@ class ExtraPart(ConfModel):
     screenshot_interval: int = 500
     "截图最短间隔（毫秒）"
     screenshot: float = 1
-    "截图保留时长（小时），0 不写盘，实时预览仍可用"
+    "截图保留时长（小时），0 不保存日常截图，正数不足 5 分钟按 5 分钟保留"
+    screenshot_archive_limit_mb: int = Field(default=5120, ge=0)
+    "报错归档磁盘上限（MiB），0 不限制"
     waiting_scene: WaitingSceneConf = Field(default_factory=WaitingSceneConf)
     "等待时间"
 
@@ -259,11 +262,11 @@ class LongTaskPart(ConfModel):
     sign_in: SignInConf = Field(default_factory=SignInConf)
     "签到活动"
 
-    class HotUpdateConf(ConfModel):
+    class ResourceUpdateConf(ConfModel):
         enable: bool = False
-        "热更新检查开关（默认关）"
+        "资源更新检查开关（默认关）"
         auto_update: bool = False
-        "发现热更新或资源包更新时自动安装"
+        "发现资源包更新时自动安装"
 
         @model_validator(mode="after")
         def auto_update_requires_check(self):
@@ -271,8 +274,8 @@ class LongTaskPart(ConfModel):
                 self.enable = True
             return self
 
-    hot_update: HotUpdateConf = Field(default_factory=HotUpdateConf)
-    "热更新"
+    resource_update: ResourceUpdateConf = Field(default_factory=ResourceUpdateConf)
+    "资源更新"
 
 
 class MaaPart(ConfModel):
@@ -410,6 +413,9 @@ class WorkshopDeerFodderItem(WorkShopItem):
 
 
 class RIICPart(ConfModel):
+    swap_contact_train: bool = False
+    "右侧训练室在办公室上方；默认办公室在上、训练室在下"
+
     class RunOrderGrandetModeConf(ConfModel):
         enable: bool = True
         "葛朗台跑单开关"
@@ -509,6 +515,8 @@ class RIICPart(ConfModel):
                     "medium" if data["low_frame_rate_mode"] else "high"
                 )
         mode = data.get("performance_mode")
+        if mode == "high" and is_android_runtime():
+            mode = data["performance_mode"] = "medium"
         if mode in PERFORMANCE_PRESETS:
             profile = PERFORMANCE_PRESETS[mode]
             data["low_frame_rate_mode"] = profile.low_frame_rate
@@ -588,7 +596,7 @@ class RIICPart(ConfModel):
     dorm_order: str = ""
     "稳定版全局宿舍优先级"
     refresh_backup_plan_after_mood: bool = True
-    "缓存清零重启后读取心情并按载入心情数据模式重启，默认开启"
+    "仅旧宿舍逻辑：缓存清零后读取心情并重载调度器，默认开启"
     assistant_follows_schedule: bool = False
     "协助位跟随排班（专精时协助位不固定，由排班系统管理）"
     enable_mastery: bool = True
@@ -737,6 +745,7 @@ class MaaRewardPart(ConfModel):
 # （没配过就不写新键、不注入默认值），新旧并存时以新键为准（不覆盖）。
 _LEGACY_KEY_MIGRATIONS = {
     "exipring_medicine_on_weekend": "expiring_medicine_on_weekend",
+    "hot_update": "resource_update",
 }
 
 

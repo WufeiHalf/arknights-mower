@@ -64,15 +64,11 @@ export async function updatePackageKind(file) {
       if (++count > 100000) throw new Error('更新包文件数量过多')
       if (entry.directory) continue
       const path = entry.filename
-      software ||= ['maa-python.json', 'mower-android.json'].includes(path)
+      software ||= ['maa-python.json', 'mower-android.json', 'ota.json'].includes(path)
       software ||= /(^|\/)(_internal|Contents\/Resources)\/arknights_mower\/__init__\.py$/.test(
         path
       )
-      resource ||= [
-        'arknights_mower/data/version.json',
-        'nav_steps.json',
-        'stage_data.json'
-      ].includes(path)
+      resource ||= path === 'arknights_mower/data/version.json'
     }
   } catch {
     throw new Error('无法读取更新包目录，请选择完整的 Mower 安装包')
